@@ -1,0 +1,49 @@
+services:
+  python:
+    build: .docker
+    container_name: thinvite-web
+    ports:
+      - 8083:8083
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    volumes:
+      - ./web:/opt/thinvite
+    networks:
+      - thinvite
+
+  mariadb:
+    image: mariadb:lts
+    container_name: thinvite-db
+    restart: always
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
+      - MYSQL_DATABASE=thinvite
+      - MYSQL_USER=thinvite
+      - MYSQL_PASSWORD=${MARIADB_PASSWORD}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - thinvite
+
+  db_admin:
+    image: ghcr.io/shyim/adminerevo:latest
+    container_name: thinvite-dbadmin
+    restart: always
+    ports:
+      - 8084:8080
+    networks:
+      - thinvite
+
+volumes:
+  mariadb_data:
+
+networks:
+  thinvite:
+
