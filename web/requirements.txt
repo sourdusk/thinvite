@@ -1,0 +1,11 @@
+nicegui
+fastapi
+python-dotenv
+aiomysql
+discord.py
+twitchAPI
+
+# test dependencies
+pytest
+pytest-asyncio
+pytest-mock

@@ -1,4 +1,4 @@
-FROM python:3.12
+FROM python:3.14
 
 USER 0
 
@@ -12,7 +12,9 @@ USER thinvite
 
 WORKDIR /opt/thinvite
 
-RUN pip install nicegui fastapi python-dotenv aiomysql discord.py twitchAPI
+COPY ./web/requirements.txt .
+
+RUN pip install -r requirements.txt
 
 CMD ["python3", "/opt/thinvite/main.py"]
 

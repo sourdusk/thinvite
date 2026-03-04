@@ -1,0 +1,86 @@
+"""Shared fixtures for the Thinvite test suite."""
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+
+# ---------------------------------------------------------------------------
+# Environment — ensure env vars are present so module-level os.getenv() calls
+# don't leave None values that could cause string-formatting errors.
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def env_vars(monkeypatch):
+    monkeypatch.setenv("THINVITE_TWITCH_ID", "test_twitch_id")
+    monkeypatch.setenv("THINVITE_TWITCH_SECRET", "test_twitch_secret")
+    monkeypatch.setenv("THINVITE_DISCORD_ID", "test_discord_id")
+    monkeypatch.setenv("THINVITE_DISCORD_SECRET", "test_discord_secret")
+    monkeypatch.setenv("THINVITE_DISCORD_BOT_TOKEN", "test_bot_token")
+    monkeypatch.setenv("THINVITE_DB_PASSWORD", "test_db_password")
+
+
+# ---------------------------------------------------------------------------
+# DB pool mock — patches db._pool so no real MySQL connection is needed.
+# Returns (pool_mock, cursor_mock).  Tests can adjust cursor_mock attributes
+# (fetchone, fetchall, rowcount) to control return values.
+# ---------------------------------------------------------------------------
+def _build_pool_mock(fetchone=None, fetchall=None, rowcount=1):
+    cur = AsyncMock()
+    cur.rowcount = rowcount
+    cur.fetchone = AsyncMock(return_value=fetchone)
+    cur.fetchall = AsyncMock(return_value=fetchall or [])
+    cur.__aenter__ = AsyncMock(return_value=cur)
+    cur.__aexit__ = AsyncMock(return_value=False)
+
+    conn = MagicMock()
+    conn.cursor = MagicMock(return_value=cur)
+    conn.__aenter__ = AsyncMock(return_value=conn)
+    conn.__aexit__ = AsyncMock(return_value=False)
+
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=conn)
+    return pool, cur
+
+
+@pytest.fixture
+def mock_pool(monkeypatch):
+    """Patch db._pool and return (pool, cursor)."""
+    import db
+    pool, cur = _build_pool_mock()
+    monkeypatch.setattr(db, "_pool", pool)
+    return pool, cur
+
+
+@pytest.fixture
+def mock_pool_factory(monkeypatch):
+    """Return a callable that creates and installs a pool with custom defaults."""
+    import db
+
+    def _factory(fetchone=None, fetchall=None, rowcount=1):
+        pool, cur = _build_pool_mock(fetchone=fetchone, fetchall=fetchall, rowcount=rowcount)
+        monkeypatch.setattr(db, "_pool", pool)
+        return pool, cur
+
+    return _factory
+
+
+# ---------------------------------------------------------------------------
+# aiohttp session mock helper
+# ---------------------------------------------------------------------------
+def make_aiohttp_response(json_data: dict, status: int = 200):
+    resp = AsyncMock()
+    resp.status = status
+    resp.json = AsyncMock(return_value=json_data)
+    resp.text = AsyncMock(return_value=str(json_data))
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=False)
+    return resp
+
+
+def make_aiohttp_session(get_resp=None, post_resp=None):
+    sess = MagicMock()
+    sess.__aenter__ = AsyncMock(return_value=sess)
+    sess.__aexit__ = AsyncMock(return_value=False)
+    if get_resp is not None:
+        sess.get = MagicMock(return_value=get_resp)
+    if post_resp is not None:
+        sess.post = MagicMock(return_value=post_resp)
+    return sess

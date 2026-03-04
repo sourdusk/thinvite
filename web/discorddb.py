@@ -2,11 +2,11 @@ import logging
 import os
 
 import aiohttp
+import aiomysql
 from dotenv import load_dotenv
-import aiopg
-import psycopg2
 
 import db
+import sanitize
 
 logger = logging.getLogger()
 
@@ -14,16 +14,16 @@ load_dotenv()
 
 
 async def update_info(sess_id: str, code: str, guild_id: str) -> (bool, str):
+    if not sanitize.is_valid_snowflake(guild_id):
+        return (False, "Invalid guild ID")
     token = await get_discord_token(code)
-    logger.error(token)
     if token is None:
         return (False, "Failed to get auth token")
     user_id = await get_user_info(token)
     if user_id is None:
         return (False, "Failed to get user info")
-    async with aiopg.connect(**db.db_info) as conn:
-        async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.autocommit = True
+    async with db._pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
             # Check to see if there's an existing discord server
             await cur.execute(
                 "SELECT id FROM users WHERE discord_server_id = %s", (guild_id,)
@@ -70,6 +70,36 @@ async def get_discord_token(code: str) -> str:
             return res["access_token"]
 
 
+async def create_invite(guild_id: str) -> str:
+    """Create a single-use 24h Discord invite for the given guild using the bot token."""
+    if not sanitize.is_valid_snowflake(guild_id):
+        return None
+    bot_token = os.getenv("THINVITE_DISCORD_BOT_TOKEN")
+    async with aiohttp.ClientSession(
+        headers={"Authorization": f"Bot {bot_token}"}
+    ) as session:
+        async with session.get(
+            f"https://discord.com/api/v10/guilds/{guild_id}/channels"
+        ) as resp:
+            if resp.status != 200:
+                logger.error(f"Failed to get channels for guild {guild_id}: {resp.status}")
+                return None
+            channels = await resp.json()
+        text_channel = next((c for c in channels if c.get("type") == 0), None)
+        if text_channel is None:
+            logger.error(f"No text channel found in guild {guild_id}")
+            return None
+        async with session.post(
+            f"https://discord.com/api/v10/channels/{text_channel['id']}/invites",
+            json={"max_age": 86400, "max_uses": 1, "unique": True},
+        ) as resp:
+            if resp.status != 200:
+                logger.error(f"Failed to create invite: {resp.status} {await resp.text()}")
+                return None
+            res = await resp.json()
+            return f"https://discord.gg/{res['code']}"
+
+
 async def get_user_info(token: str) -> str:
     async with aiohttp.ClientSession(
         headers={
@@ -78,7 +108,6 @@ async def get_user_info(token: str) -> str:
     ) as session:
         async with session.get("https://discord.com/api/v10/users/@me") as resp:
             res = await resp.json()
-            logger.error(res)
             if res is not None and "id" in res:
                 return res["id"]
             return None

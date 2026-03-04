@@ -1,6 +1,6 @@
 services:
   python:
-    build: .docker
+    build: .
     container_name: thinvite-web
     ports:
       - 8083:8083
@@ -23,8 +23,9 @@ services:
       - MYSQL_PASSWORD=${MARIADB_PASSWORD}
     volumes:
       - mariadb_data:/var/lib/mysql
+      - ./db:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       start_period: 10s
       interval: 10s
       timeout: 5s
