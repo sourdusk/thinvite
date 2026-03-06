@@ -73,15 +73,16 @@ async def get_user_by_session_id(sess_id: str) -> dict:
 
 
 async def ensure_db_user(sess_id: str) -> bool:
-    if await get_user_by_session_id(sess_id) is not None:
-        return True
+    """Insert a user row if one does not already exist.
+
+    Uses INSERT IGNORE so concurrent requests with the same session ID
+    are race-safe — only one row is ever created, and both callers succeed.
+    """
     async with _acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
+        async with conn.cursor() as cur:
             await cur.execute(
-                "INSERT INTO users (session_id) VALUES (%s)", (sess_id,)
+                "INSERT IGNORE INTO users (session_id) VALUES (%s)", (sess_id,)
             )
-            if cur.rowcount != 1:
-                return False
             return True
 
 

@@ -131,9 +131,9 @@ class _SessionSecurityMiddleware:
                         val = value.decode("latin-1")
                         cookie_name = val.split("=")[0].strip()
                         if cookie_name in ("session", "id"):
-                            if "Secure" not in val:
+                            if "secure" not in val.lower():
                                 val += "; Secure"
-                            if "Max-Age" not in val:
+                            if "max-age" not in val.lower():
                                 val += f"; Max-Age={_SESSION_MAX_AGE_SECONDS}"
                             value = val.encode("latin-1")
                     new_raw.append((name, value))
@@ -1656,4 +1656,5 @@ ui.run(
     show=False,
     title="Thinvite",
     forwarded_allow_ips="127.0.0.1",
+    session_middleware_kwargs={"https_only": True},
 )

@@ -24,24 +24,21 @@ async def test_get_user_by_session_id_not_found(mock_pool_factory):
 # ---------------------------------------------------------------------------
 # ensure_db_user
 # ---------------------------------------------------------------------------
+async def test_ensure_db_user_creates_new(mock_pool):
+    # INSERT IGNORE fires; rowcount=1 means a new row was inserted.
+    _, cur = mock_pool
+    result = await db.ensure_db_user("new_session")
+    assert result is True
+    sql = cur.execute.call_args[0][0]
+    assert "INSERT IGNORE" in sql
+
+
 async def test_ensure_db_user_already_exists(mock_pool_factory):
-    # fetchone returns a user → no INSERT needed
-    mock_pool_factory(fetchone={"id": 1, "session_id": "abc"})
-    result = await db.ensure_db_user("abc")
+    # INSERT IGNORE fires; rowcount=0 means the row already existed.
+    # Either way the function succeeds — race-safe create-if-not-exists.
+    _, cur = mock_pool_factory(rowcount=0)
+    result = await db.ensure_db_user("existing_session")
     assert result is True
-
-
-async def test_ensure_db_user_creates_new(mock_pool_factory):
-    # fetchone returns None on SELECT → INSERT fires (rowcount=1)
-    mock_pool_factory(fetchone=None, rowcount=1)
-    result = await db.ensure_db_user("new_session")
-    assert result is True
-
-
-async def test_ensure_db_user_insert_fails(mock_pool_factory):
-    mock_pool_factory(fetchone=None, rowcount=0)
-    result = await db.ensure_db_user("new_session")
-    assert result is False
 
 
 # ---------------------------------------------------------------------------
