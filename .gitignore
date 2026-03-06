@@ -1,6 +1,7 @@
 # Environment files
 .env
 web/.env
+web/beta_users.txt
 
 # Python
 __pycache__/
@@ -39,3 +40,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Claude Code memory
+.claude/
