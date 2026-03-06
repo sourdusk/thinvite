@@ -283,7 +283,8 @@ def header(show_logout: bool = False):
             '<line x1="28.25" y1="27.25" x2="35.75" y2="21.75" stroke="white" stroke-width="2.5" stroke-linecap="round"/>'
             "</svg>"
             '<span class="th-wordmark-text">Thin<span class="th-grad-text">vite</span></span>'
-            "</a>"
+            "</a>",
+            sanitize=False,
         )
         if show_logout:
             ui.button(
@@ -321,12 +322,30 @@ def footer():
             ui.label("\u00a9 SourK9 Designs, LLC 2026").classes("text-caption").style(
                 "color: var(--color-muted);"
             )
-            with ui.row().classes("gap-md"):
+            with ui.row().classes("gap-md items-center"):
                 ui.link("Contact", "/contact").classes("text-caption").style(
                     "color: var(--color-muted);"
                 )
                 ui.link("Privacy Policy", "/privacy").classes("text-caption").style(
                     "color: var(--color-muted);"
+                )
+                ui.html(
+                    '<a href="https://github.com/sourdusk/thinvite" target="_blank"'
+                    ' rel="noopener" aria-label="GitHub" style="color: var(--color-muted);'
+                    ' display: flex; align-items: center;">'
+                    '<svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor"'
+                    ' aria-hidden="true">'
+                    '<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17'
+                    ".55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94"
+                    "-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87"
+                    " 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59"
+                    ".82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27"
+                    " 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08"
+                    " 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54"
+                    ' 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16'
+                    ' 8c0-4.42-3.58-8-8-8z"/>'
+                    "</svg></a>",
+                    sanitize=False,
                 )
 
 
@@ -363,31 +382,26 @@ async def health_check():
 @ui.page("/", dark=True)
 async def home_page():
     header()
-    with ui.element("div").style("width: 100%; display: flex; justify-content: center;"):
+    with ui.element("div").classes("th-hero"):
         ui.html(
-            '<div class="th-hero">'
             '<p class="th-label">Channel Redeems &middot; Discord Invites &middot; Verified Access</p>'
             '<h1 class="th-display">Twitch redeems &rarr; Discord access. <em>Securely.</em></h1>'
-            '<h2 class="th-heading">Your Twitch. Your Discord.</h2>'
             '<p class="th-body">Streamers set up a channel point redeem. Viewers sign in with Twitch '
-            "and receive a unique, single-use invite link. No sharing, no abuse.</p>"
-            "</div>"
+            "and receive a unique, single-use invite link. No sharing, no abuse.</p>",
+            sanitize=False,
         )
-    with ui.element("div").style(
-        "width: 100%; display: flex; justify-content: center; gap: var(--space-5); "
-        "flex-wrap: wrap; padding-bottom: var(--space-22);"
-    ):
-        ui.button("I\u2019m a streamer", on_click=lambda: ui.navigate.to("/begin")).classes(
-            "th-btn-primary"
-        ).props("no-caps unelevated")
-        ui.button("Redeem an invite", on_click=lambda: ui.navigate.to("/redeem")).classes(
-            "th-btn-secondary"
-        ).props("no-caps outline")
+        with ui.element("div").classes("th-cta-row"):
+            ui.button("I\u2019m a streamer", on_click=lambda: ui.navigate.to("/streamer"), color=None).classes(
+                "th-btn-primary"
+            ).props("no-caps unelevated")
+            ui.button("Redeem an invite", on_click=lambda: ui.navigate.to("/redeem"), color=None).classes(
+                "th-btn-secondary"
+            ).props("no-caps outline")
     footer()
 
 
-@ui.page("/begin", dark=True)
-async def begin_page():
+@ui.page("/streamer", dark=True)
+async def streamer_page():
     if "error" in app.storage.user and app.storage.user["error"] is not None:
         ui.notify(app.storage.user["error"])
         app.storage.user["error"] = None
@@ -395,7 +409,7 @@ async def begin_page():
     res = await db.ensure_db_user(_sess_id())
     if not res:
         app.storage.user["error"] = "Failed to create user"
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
 
     # Fetch connection state before rendering — enables the beta gate and
@@ -425,11 +439,14 @@ async def begin_page():
         app.storage.user["state"] = state
         ui.navigate.to(twitch.generate_auth_code_link(state))
 
-    header(show_logout=True)
+    header(show_logout=twitch_user_exists)
     if not (twitch_user_exists and discord_connected):
         with ui.row().classes("window-width row justify-center items-center"):
-            ui.label("Begin by logging in to both Twitch and Discord.").classes(
-                "text-h3 text-center text-justify"
+            ui.html(
+                '<p style="font-size:3rem; font-weight:400; text-align:center;'
+                " line-height:1.5; padding:0.5rem 1rem 1rem 1rem;"
+                ' color:inherit; margin:0;">Begin by logging in to both Twitch and Discord.</p>',
+                sanitize=False,
             )
 
     # Row with buttons
@@ -450,7 +467,7 @@ async def begin_page():
                 async def disconnect_twitch():
                     await bot.unsubscribe(_sess_id())
                     await db.disconnect_twitch(_sess_id())
-                    ui.navigate.to("/begin")
+                    ui.navigate.to("/streamer")
 
                 ui.button(
                     "Disconnect Twitch", color="negative", on_click=disconnect_twitch
@@ -460,8 +477,7 @@ async def begin_page():
 
                 if redeems_raw is None:
                     ui.label(
-                        "Could not load channel point redeems — Twitch API timed out. "
-                        "Please refresh the page."
+                        "Could not load channel point redeems. Please refresh the page."
                     ).classes("text-body2 text-center text-negative")
                 else:
                     redeems = {r["id"]: r["title"] for r in redeems_raw}
@@ -496,7 +512,7 @@ async def begin_page():
                             ok = await twitch.update_twitch_redeem(_sess_id(), new_id)
                             if ok:
                                 ui.notify("Redeem updated!", type="positive")
-                                ui.navigate.to("/begin")
+                                ui.navigate.to("/streamer")
                             else:
                                 ui.notify("Failed to update redeem.", type="negative")
 
@@ -565,7 +581,7 @@ async def begin_page():
                 async def disconnect_discord():
                     await bot.unsubscribe(_sess_id())
                     await db.disconnect_discord(_sess_id())
-                    ui.navigate.to("/begin")
+                    ui.navigate.to("/streamer")
 
                 ui.button(
                     "Disconnect Discord", color="negative", on_click=disconnect_discord
@@ -597,6 +613,11 @@ async def begin_page():
                 if viewer is None:
                     ui.notify(f"Twitch user '{username}' not found.", type="negative")
                     return
+                if await db.has_pending_redemption(_sess_id(), viewer["id"]):
+                    ui.notify(
+                        f"{viewer['login']} already has a pending invite.", type="warning"
+                    )
+                    return
                 await db.add_manual_redemption(
                     _sess_id(), viewer["id"], viewer["login"]
                 )
@@ -619,9 +640,9 @@ async def begin_page():
             {"name": "viewer", "label": "Twitch User", "field": "viewer", "align": "left"},
             {"name": "type", "label": "Type", "field": "type", "align": "left"},
             {"name": "status", "label": "Status", "field": "status", "align": "left"},
-            {"name": "redeemed_at", "label": "Redeemed", "field": "redeemed_at", "align": "left"},
+            {"name": "redeemed_at", "label": "Added", "field": "redeemed_at", "align": "left"},
             {"name": "fulfilled_at", "label": "Fulfilled", "field": "fulfilled_at", "align": "left"},
-            {"name": "invite_url", "label": "Invite", "field": "invite_url", "align": "left"},
+            {"name": "invite_url", "label": "Invite Link", "field": "invite_url", "align": "left"},
             {"name": "actions", "label": "", "field": "actions", "align": "center"},
         ]
 
@@ -630,7 +651,7 @@ async def begin_page():
 
         def _row_status(r):
             if r["revoked_at"]:
-                return "Revoked"
+                return "Expired" if r.get("is_expired") else "Revoked"
             if r["fulfilled_at"]:
                 return "Fulfilled"
             return "Pending"
@@ -660,6 +681,7 @@ async def begin_page():
                 "pending": sum(1 for r in rows if r["status"] == "Pending"),
                 "fulfilled": sum(1 for r in rows if r["status"] == "Fulfilled"),
                 "revoked": sum(1 for r in rows if r["status"] == "Revoked"),
+                "expired": sum(1 for r in rows if r["status"] == "Expired"),
             }
 
         rows = await _load_rows(_sess_id())
@@ -669,7 +691,8 @@ async def begin_page():
             stat_total = ui.label(f"Total: {stats['total']}").classes("text-body2")
             stat_pending = ui.label(f"Pending: {stats['pending']}").classes("text-body2 text-warning")
             stat_fulfilled = ui.label(f"Fulfilled: {stats['fulfilled']}").classes("text-body2 text-positive")
-            stat_revoked = ui.label(f"Revoked: {stats['revoked']}").classes("text-body2 text-grey-6")
+            stat_revoked = ui.label(f"Revoked: {stats['revoked']}").classes("text-body2 text-negative")
+            stat_expired = ui.label(f"Expired: {stats['expired']}").classes("text-body2 text-negative")
 
         # Bulk-revoke button
         _current_sess = _sess_id()
@@ -721,6 +744,15 @@ async def begin_page():
                 <span v-else>—</span>
             </q-td>
         """)
+        redemptions_table.add_slot("body-cell-status", """
+            <q-td :props="props">
+                <span :class="{
+                    'text-positive': props.row.status === 'Fulfilled',
+                    'text-warning':  props.row.status === 'Pending',
+                    'text-negative': props.row.status === 'Revoked' || props.row.status === 'Expired'
+                }" style="font-weight: 500;">{{ props.row.status }}</span>
+            </q-td>
+        """)
 
         def _refresh_stats(current_rows):
             s = _compute_stats(current_rows)
@@ -728,6 +760,7 @@ async def begin_page():
             stat_pending.set_text(f"Pending: {s['pending']}")
             stat_fulfilled.set_text(f"Fulfilled: {s['fulfilled']}")
             stat_revoked.set_text(f"Revoked: {s['revoked']}")
+            stat_expired.set_text(f"Expired: {s['expired']}")
 
         async def handle_revoke(e):
             rid = e.args.get("id")
@@ -809,7 +842,7 @@ async def begin_page():
 async def twitch_page(request: Request):
     if _is_rate_limited(request):
         app.storage.user["error"] = "Too many attempts. Please wait a minute and try again."
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
 
     with ui.row().classes("window-width row justify-center items-center"):
@@ -821,15 +854,15 @@ async def twitch_page(request: Request):
 
     # Check for errors, state mismatch, no code provided.
     if "error" in app.storage.user and app.storage.user["error"] is not None:
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
     if app.storage.user.get("state") is None or request.query_params.get("state") != app.storage.user.get("state"):
         app.storage.user["error"] = "Invalid state"
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
     if "code" not in request.query_params:
         app.storage.user["error"] = "Twitch did not provide an auth code."
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
 
     # Consume the state token (one-time use)
@@ -840,7 +873,7 @@ async def twitch_page(request: Request):
     res, err_msg = await twitch.init_login(_sess_id(), code)
     if not res:
         app.storage.user["error"] = err_msg
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
 
     # Rotate the session after successful authentication to prevent fixation.
@@ -864,7 +897,7 @@ async def twitch_page(request: Request):
         ui.navigate.to("/waitlist")
         return
 
-    ui.navigate.to("/begin")
+    ui.navigate.to("/streamer")
     return
 
 
@@ -872,7 +905,7 @@ async def twitch_page(request: Request):
 async def discord_page(request: Request):
     if _is_rate_limited(request):
         app.storage.user["error"] = "Too many attempts. Please wait a minute and try again."
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
 
     with ui.row().classes("window-width row justify-center items-center"):
@@ -888,7 +921,7 @@ async def discord_page(request: Request):
         or request.query_params.get("state") != app.storage.user.get("discord_state")
     ):
         app.storage.user["error"] = "Invalid state parameter."
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
 
     # Consume the state token (one-time use)
@@ -896,11 +929,11 @@ async def discord_page(request: Request):
 
     if "code" not in request.query_params:
         app.storage.user["error"] = "Discord did not provide an auth code."
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
     if "guild_id" not in request.query_params:
         app.storage.user["error"] = "Discord did not provide a guild id."
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
 
     code = request.query_params["code"]
@@ -910,7 +943,7 @@ async def discord_page(request: Request):
     )
     if not res:
         app.storage.user["error"] = err_msg
-        ui.navigate.to("/begin")
+        ui.navigate.to("/streamer")
         return
 
     # Rotate the session after successful authentication to prevent fixation.
@@ -922,7 +955,7 @@ async def discord_page(request: Request):
     if user and user.get("twitch_user_id"):
         asyncio.create_task(bot.subscribe(user))
 
-    ui.navigate.to("/begin")
+    ui.navigate.to("/streamer")
     return
 
 
@@ -947,14 +980,15 @@ async def redeem_page():
 
     header()
     with ui.element("div").classes("th-page-wrap"):
-        ui.html('<p class="th-label" style="margin-bottom: var(--space-4);">Viewer Login</p>')
+        ui.html('<p class="th-label" style="margin-bottom: var(--space-4);">Viewer Login</p>', sanitize=False)
         with ui.element("div").classes("th-card"):
             ui.html(
                 '<h2 class="th-card-title">Claim your Discord invite</h2>'
                 '<p class="th-card-body">Sign in with Twitch to verify your identity '
-                "and claim your one-time invite link.</p>"
+                "and claim your one-time invite link.</p>",
+                sanitize=False,
             )
-            with ui.button(on_click=twitch_viewer_login).props(
+            with ui.button(on_click=twitch_viewer_login, color=None).props(
                 "no-caps unelevated"
             ).style(
                 "width: 100%; background: #6441a5; border-radius: var(--radius-sm); "
@@ -1053,9 +1087,17 @@ async def viewer_auth_page(request: Request):
 async def redeem_pick_page():
     """Shown when a viewer has pending redemptions from multiple streamers."""
     viewer_user_id = app.storage.user.get("viewer_user_id")
-    picks = app.storage.user.get("viewer_picks")
+    if not viewer_user_id:
+        ui.navigate.to("/redeem")
+        return
 
-    if not viewer_user_id or not picks:
+    # Re-fetch from DB on every load so stale session data never shows
+    # redemptions that have since been revoked.
+    picks = await db.get_pending_redemptions_for_viewer(viewer_user_id)
+    if not picks:
+        app.storage.user.pop("viewer_user_id", None)
+        app.storage.user.pop("viewer_picks", None)
+        app.storage.user["viewer_error"] = "All your pending redemptions have been revoked."
         ui.navigate.to("/redeem")
         return
 
@@ -1150,12 +1192,13 @@ async def contact_page():
 
     header()
     with ui.element("div").classes("th-page-wrap"):
-        ui.html('<p class="th-label" style="margin-bottom: var(--space-4);">Get in Touch</p>')
+        ui.html('<p class="th-label" style="margin-bottom: var(--space-4);">Get in Touch</p>', sanitize=False)
         with ui.element("div").classes("th-card"):
             ui.html(
                 '<h2 class="th-card-title">Contact Us</h2>'
                 '<p class="th-card-body">Have a question or feedback? '
-                "Send us a message.</p>"
+                "Send us a message.</p>",
+                sanitize=False,
             )
 
             name_input = (
@@ -1182,7 +1225,8 @@ async def contact_page():
                     f' data-callback="onTurnstileSuccess"'
                     f' data-expired-callback="onTurnstileExpired"'
                     f' data-execution="render"'
-                    f' data-size="invisible"></div>'
+                    f' data-size="invisible"></div>',
+                    sanitize=False,
                 )
 
             async def submit_contact():
@@ -1243,7 +1287,7 @@ async def contact_page():
                         "if (typeof turnstile !== 'undefined') turnstile.reset()"
                     )
 
-            ui.button("Send message", on_click=submit_contact).classes(
+            ui.button("Send message", on_click=submit_contact, color=None).classes(
                 "th-btn-primary q-mt-md"
             ).props("no-caps unelevated")
 
@@ -1266,12 +1310,13 @@ async def waitlist_page():
 
     header()
     with ui.element("div").classes("th-page-wrap"):
-        ui.html('<p class="th-label" style="margin-bottom: var(--space-4);">Private Beta</p>')
+        ui.html('<p class="th-label" style="margin-bottom: var(--space-4);">Private Beta</p>', sanitize=False)
         with ui.element("div").classes("th-card"):
             ui.html(
                 '<h2 class="th-card-title">Join the Waitlist</h2>'
                 '<p class="th-card-body">Thinvite is currently in private beta. '
-                "Enter your email and we\u2019ll notify you when access opens.</p>"
+                "Enter your email and we\u2019ll notify you when access opens.</p>",
+                sanitize=False,
             )
 
             # Pre-fill Twitch username when the beta gate sent the user here.
@@ -1295,7 +1340,8 @@ async def waitlist_page():
                     f' data-callback="onTurnstileSuccess"'
                     f' data-expired-callback="onTurnstileExpired"'
                     f' data-execution="render"'
-                    f' data-size="invisible"></div>'
+                    f' data-size="invisible"></div>',
+                    sanitize=False,
                 )
 
             async def submit_waitlist():
@@ -1348,7 +1394,7 @@ async def waitlist_page():
                         "if (typeof turnstile !== 'undefined') turnstile.reset()"
                     )
 
-            ui.button("Join waitlist", on_click=submit_waitlist).classes(
+            ui.button("Join waitlist", on_click=submit_waitlist, color=None).classes(
                 "th-btn-primary q-mt-md"
             ).props("no-caps unelevated")
 
@@ -1420,11 +1466,11 @@ async def privacy_page():
             "6. Data Retention",
             "Session data: Retained for the duration of your browser session or until you clear "
             "your cookies.",
-            "Streamer account data: Retained until you delete your account via the /begin page.",
+            "Streamer account data: Retained until you delete your account via the /streamer page.",
             "Redemption records: Retained for up to 2 years from the date of redemption, "
             "then permanently deleted.",
             "You may request deletion of all your data at any time using the delete option at "
-            "the bottom of the /begin page.",
+            "the bottom of the /streamer page.",
         )
 
         section(
@@ -1459,7 +1505,7 @@ async def privacy_page():
             "Right of access (Art. 15): Request a copy of the personal data we hold about you.",
             "Right to rectification (Art. 16): Request correction of inaccurate personal data.",
             "Right to erasure (Art. 17): Request deletion of your personal data. Use the delete "
-            "button on the /begin page, or contact us directly.",
+            "button on the /streamer page, or contact us directly.",
             "Right to restriction of processing (Art. 18): Request that we limit how we use your data.",
             "Right to data portability (Art. 20): Request your data in a structured, machine-readable "
             "format where technically feasible.",
@@ -1672,6 +1718,12 @@ def _roboto_font_display_css() -> str:
     ]
     return "<style>\n" + "\n".join(patched) + "\n</style>"
 
+
+# Favicon
+ui.add_head_html(
+    '<link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">',
+    shared=True,
+)
 
 # Brand fonts (Syne for headings/wordmark, DM Sans for body)
 ui.add_head_html(

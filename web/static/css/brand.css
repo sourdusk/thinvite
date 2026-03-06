@@ -62,7 +62,7 @@ body {
 /* Primary gradient button — apply with .classes('th-btn-primary') */
 .q-btn.th-btn-primary {
   background: var(--grad-primary) !important;
-  color: white !important;
+  color: var(--color-frost) !important;
   font-weight: var(--fw-semibold) !important;
   font-size: var(--fs-14) !important;
   box-shadow: var(--shadow-btn-primary) !important;
@@ -70,13 +70,13 @@ body {
   border: none !important;
 }
 
-/* Secondary outline button — apply with .classes('th-btn-secondary') */
+/* Secondary gradient outline button — apply with .classes('th-btn-secondary') */
 .q-btn.th-btn-secondary {
   background: transparent !important;
-  color: var(--color-frost) !important;
+  color: var(--color-violet-lt) !important;
   font-weight: var(--fw-medium) !important;
   font-size: var(--fs-14) !important;
-  border: var(--border-violet-medium) !important;
+  border: 1px solid var(--color-violet) !important;
   padding: var(--space-btn-y) var(--space-btn-x) !important;
   box-shadow: none !important;
 }
@@ -157,18 +157,28 @@ body {
   align-items: center;
   justify-content: center;
   text-align: center;
-  min-height: 80vh;
-  padding: var(--space-16) var(--space-12);
-  gap: var(--space-6);
-  max-width: 800px;
+  min-height: 90vh;
+  padding: var(--space-6) var(--space-12) var(--space-24);
+  gap: var(--space-8);
+  max-width: 900px;
   margin: 0 auto;
   box-sizing: border-box;
+}
+
+.th-hero .th-label {
+  font-size: 13px;
+}
+
+.th-hero .q-btn.th-btn-primary,
+.th-hero .q-btn.th-btn-secondary {
+  font-size: 16px !important;
+  padding: 14px 32px !important;
 }
 
 .th-display {
   font-family: var(--font-body);
   font-weight: var(--fw-light);
-  font-size: var(--fs-40);
+  font-size: 60px;
   letter-spacing: var(--ls-tightest);
   line-height: var(--lh-tight);
   color: var(--color-frost);
@@ -196,11 +206,12 @@ body {
 .th-body {
   font-family: var(--font-body);
   font-weight: var(--fw-regular);
-  font-size: var(--fs-15);
+  font-size: 17px;
   line-height: var(--lh-base);
   color: var(--color-body-text);
-  max-width: 520px;
-  margin: 0;
+  max-width: 620px;
+  margin: 0 auto;
+  text-align: center;
 }
 
 .th-label {

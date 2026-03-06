@@ -460,10 +460,11 @@ async def get_expired_pending_redemptions() -> list:
 
 
 async def expire_redemption(redemption_id: int) -> None:
-    """Mark a single redemption as expired (sets revoked_at to now)."""
+    """Mark a single redemption as auto-expired (sets revoked_at + is_expired)."""
     async with _acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "UPDATE redemptions SET revoked_at = NOW() WHERE id = %s",
+                "UPDATE redemptions SET revoked_at = NOW(), is_expired = TRUE "
+                "WHERE id = %s",
                 (redemption_id,),
             )

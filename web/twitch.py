@@ -245,27 +245,51 @@ async def get_user_info(token: str) -> dict:
 
 
 async def get_channel_redeems(sess_id: str) -> list | None:
-    """Return the full list of custom reward objects, or None on error."""
+    """Return the full list of custom reward objects, or None on error.
+
+    On HTTP 401 the stored token is refreshed and the request retried once.
+    """
     user = await get_user_from_db(sess_id)
     if user is None:
         return None
     broadcaster_id = user["twitch_user_id"]
     token = user["twitch_auth_token"]
-    async with aiohttp.ClientSession(
-        timeout=_TIMEOUT,
-        headers={
-            "client-id": os.getenv("THINVITE_TWITCH_ID"),
-            "Authorization": f"Bearer {token}",
-        }
-    ) as session:
-        async with session.get(
-            f"https://api.twitch.tv/helix/channel_points/custom_rewards"
-            f"?broadcaster_id={broadcaster_id}"
-        ) as resp:
-            res = await resp.json()
-            if res is not None and "data" in res:
-                return res["data"]
-            return None
+
+    async def _call(tok: str):
+        async with aiohttp.ClientSession(
+            timeout=_TIMEOUT,
+            headers={
+                "client-id": os.getenv("THINVITE_TWITCH_ID"),
+                "Authorization": f"Bearer {tok}",
+            }
+        ) as session:
+            async with session.get(
+                f"https://api.twitch.tv/helix/channel_points/custom_rewards"
+                f"?broadcaster_id={broadcaster_id}"
+            ) as resp:
+                return resp.status, await resp.json()
+
+    status, res = await _call(token)
+
+    if status == 401:
+        refresh_code = user.get("twitch_token_refresh_code")
+        if refresh_code:
+            logger.info(f"get_channel_redeems: 401 for session {sess_id}, refreshing token")
+            new_tokens = await refresh_auth_token(refresh_code)
+            if new_tokens:
+                token = new_tokens["access_token"]
+                await db.update_twitch_auth_token(
+                    sess_id, token,
+                    new_tokens["expires_in"] + int(time.time()),
+                    new_tokens["refresh_token"],
+                )
+                status, res = await _call(token)
+
+    if status == 200 and res is not None and "data" in res:
+        return res["data"]
+
+    logger.warning(f"get_channel_redeems failed: HTTP {status} — {res}")
+    return None
 
 
 async def update_twitch_info(

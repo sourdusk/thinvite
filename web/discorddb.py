@@ -92,6 +92,10 @@ async def update_info(sess_id: str, code: str, guild_id: str) -> (bool, str):
 
 
 async def get_discord_token(code: str) -> str:
+    # Read SITE_URL at call time so we always use the live value rather than
+    # a module-level constant that may have been captured before load_dotenv().
+    site_url = os.getenv("SITE_URL", "")
+    redirect_uri = site_url.rstrip("/") + "/api/discord"
     async with aiohttp.ClientSession(
         timeout=_TIMEOUT, headers={"Content-Type": "application/x-www-form-urlencoded"}
     ) as session:
@@ -102,11 +106,14 @@ async def get_discord_token(code: str) -> str:
                 "client_secret": os.getenv("THINVITE_DISCORD_SECRET"),
                 "code": code,
                 "grant_type": "authorization_code",
-                "redirect_uri": _SITE_URL + "/api/discord",
+                "redirect_uri": redirect_uri,
             },
         ) as resp:
             res = await resp.json()
             if "access_token" not in res:
+                logger.warning(
+                    f"Discord token exchange failed (redirect_uri={redirect_uri!r}): {res}"
+                )
                 return None
             return res["access_token"]
 
