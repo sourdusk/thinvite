@@ -27,7 +27,7 @@ _pool: aiomysql.Pool = None
 async def init_pool() -> None:
     global _pool
     _pool = await aiomysql.create_pool(
-        **db_info, minsize=2, maxsize=10, autocommit=True,
+        **db_info, minsize=2, maxsize=25, autocommit=True,
         pool_recycle=3600,  # recycle connections older than 1 hour
     )
 
@@ -254,29 +254,21 @@ async def fulfill_redemption(redemption_id: int, invite_url: str) -> None:
             )
 
 
-async def revoke_redemption(redemption_id: int, streamer_sess_id: str) -> str | None:
+async def revoke_redemption(redemption_id: int, streamer_sess_id: str) -> bool:
     """Revoke a pending redemption owned by *streamer_sess_id*.
 
-    Returns the invite_url of the revoked row (may be None/empty for pending
-    redemptions) so the caller can attempt to invalidate the Discord invite.
+    Returns True if the row was found and revoked, False if it was not found,
+    already revoked, already fulfilled, or owned by a different streamer.
     """
     async with _acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
+        async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT invite_url FROM redemptions "
+                "UPDATE redemptions SET revoked_at = NOW() "
                 "WHERE id = %s AND streamer_session_id = %s "
                 "AND revoked_at IS NULL AND fulfilled_at IS NULL",
                 (redemption_id, streamer_sess_id),
             )
-            row = await cur.fetchone()
-            if row is None:
-                return None
-            await cur.execute(
-                "UPDATE redemptions SET revoked_at = NOW() "
-                "WHERE id = %s AND streamer_session_id = %s",
-                (redemption_id, streamer_sess_id),
-            )
-            return row.get("invite_url")
+            return cur.rowcount == 1
 
 
 async def revoke_all_pending_redemptions(streamer_sess_id: str) -> list:
@@ -352,6 +344,26 @@ async def rotate_session(old_id: str, new_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Expiry helpers (24-hour auto-cancel)
 # ---------------------------------------------------------------------------
+
+async def get_users_with_expiring_tokens() -> list:
+    """Return users whose Twitch access token expires within the next 30 minutes.
+
+    Only includes users with both a stored token and refresh code (i.e. they
+    have completed Twitch OAuth).  The 30-minute window gives the refresh task
+    plenty of margin given it runs every 30 minutes.
+    """
+    async with _acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT session_id, twitch_token_refresh_code "
+                "FROM users "
+                "WHERE twitch_auth_token IS NOT NULL "
+                "AND twitch_token_refresh_code IS NOT NULL "
+                "AND twitch_token_expiry IS NOT NULL "
+                "AND twitch_token_expiry < UNIX_TIMESTAMP() + 1800"
+            )
+            return list(await cur.fetchall())
+
 
 async def get_expired_pending_redemptions() -> list:
     """Return all non-manual pending redemptions that are more than 24 hours old.
