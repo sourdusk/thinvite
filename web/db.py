@@ -327,7 +327,9 @@ async def get_all_bot_users() -> list:
     async with _acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                "SELECT * FROM users "
+                "SELECT session_id, twitch_user_id, twitch_user_name, "
+                "eventsub_subscription_id, discord_server_id "
+                "FROM users "
                 "WHERE twitch_user_id IS NOT NULL AND discord_server_id IS NOT NULL"
             )
             return list(await cur.fetchall())

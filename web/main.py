@@ -151,13 +151,28 @@ app.add_middleware(_SessionSecurityMiddleware)
 # In-memory rate limiter — shared across all API callback endpoints
 # ---------------------------------------------------------------------------
 _api_hits: dict = defaultdict(list)
+_api_hits_last_sweep: float = 0.0
 _RATE_WINDOW = 60   # seconds
 _RATE_MAX = 10      # max attempts per window per IP
 
 
 def _is_rate_limited(request: Request) -> bool:
-    ip = request.headers.get("X-Forwarded-For", request.client.host).split(",")[0].strip()
+    # request.client.host is already the real client IP: uvicorn resolves
+    # X-Forwarded-For automatically because forwarded_allow_ips="127.0.0.1"
+    # is set in ui.run(), so reading the header directly is unnecessary and
+    # would allow spoofing if the proxy configuration ever changes.
+    ip = request.client.host
     now = time.monotonic()
+
+    # Periodically sweep stale entries so the dict doesn't grow unboundedly
+    # under scanning traffic.  One sweep per rate window is sufficient.
+    global _api_hits_last_sweep
+    if now - _api_hits_last_sweep > _RATE_WINDOW:
+        _api_hits_last_sweep = now
+        stale = [k for k, v in _api_hits.items() if not v or v[-1] < now - _RATE_WINDOW]
+        for k in stale:
+            del _api_hits[k]
+
     hits = [t for t in _api_hits[ip] if now - t < _RATE_WINDOW]
     hits.append(now)
     _api_hits[ip] = hits
