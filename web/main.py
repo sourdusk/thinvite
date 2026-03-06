@@ -44,6 +44,10 @@ _SESSION_MAX_AGE_SECONDS = 30 * 24 * 3600  # 30 days
 
 # EventSub webhook secret — must be non-empty; asserted in startup().
 _EVENTSUB_SECRET = os.getenv("THINVITE_EVENTSUB_SECRET", "")
+# Public site URL — used for OAuth redirects, EventSub callback, CSP, and meta tags.
+_SITE_URL = os.getenv("SITE_URL", "")
+# wss:// equivalent for the CSP connect-src directive.
+_SITE_WSS = _SITE_URL.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +76,7 @@ class _SecurityHeadersMiddleware:
                     "style-src 'self' 'unsafe-inline'; "
                     "img-src 'self' data: https:; "
                     "font-src 'self' data:; "
-                    "connect-src 'self' wss://thinvite.sourk9.com; "
+                    f"connect-src 'self' {_SITE_WSS}; "
                     "frame-src https://challenges.cloudflare.com; "
                     "object-src 'none'; "
                     "base-uri 'self'; "
@@ -478,7 +482,7 @@ async def begin_page():
             ui.navigate.to(
                 f"https://discord.com/oauth2/authorize?client_id={client_id}"
                 f"&permissions=1&response_type=code"
-                f"&redirect_uri=https%3A%2F%2Fthinvite.sourk9.com%2Fapi%2Fdiscord"
+                f"&redirect_uri={urllib.parse.quote(_SITE_URL + '/api/discord')}"
                 f"&integration_type=0&scope=identify+bot+guilds&state={encoded_state}"
             )
 
@@ -1519,7 +1523,7 @@ async def _handle_eventsub_event(payload: dict) -> None:
         sess_id, viewer_id, redeemer, twitch_redemption_id, twitch_reward_id
     )
 
-    site_url = os.getenv("THINVITE_CALLBACK_URL", "https://thinvite.sourk9.com").rstrip("/")
+    site_url = _SITE_URL.rstrip("/")
     message = (
         f"@{redeemer} Head to {site_url}/redeem to claim your Discord invite! "
         "You have 24 hours before it expires."
@@ -1552,6 +1556,8 @@ app.add_static_files('/static', 'static')
 async def startup():
     if not os.getenv("NICEGUI_STORAGE_SECRET"):
         raise RuntimeError("NICEGUI_STORAGE_SECRET must be set before starting")
+    if not _SITE_URL:
+        raise RuntimeError("SITE_URL must be set before starting")
     if not _EVENTSUB_SECRET:
         raise RuntimeError("THINVITE_EVENTSUB_SECRET must be set before starting")
     await db.init_pool()         # pool must be ready before any DB call
@@ -1613,7 +1619,7 @@ ui.add_head_html(
     '<meta property="og:description" content="Thinvite links Twitch channel point redemptions'
     " to single-use Discord server invites \u2014 reward your viewers instantly.\">"
     '<meta property="og:type" content="website">'
-    '<meta property="og:url" content="https://thinvite.sourk9.com">'
+    f'<meta property="og:url" content="{_SITE_URL}">'
     '<meta name="twitter:card" content="summary">'
     '<meta name="twitter:title" content="Thinvite \u2014 Secure Discord Invites via Twitch">'
     '<meta name="twitter:description" content="Thinvite links Twitch channel point redemptions'

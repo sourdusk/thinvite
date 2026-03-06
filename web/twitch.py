@@ -11,6 +11,8 @@ import sanitize
 
 logger = logging.getLogger()
 
+_SITE_URL = os.getenv("SITE_URL", "")
+
 load_dotenv()
 
 _TIMEOUT = aiohttp.ClientTimeout(total=10)
@@ -180,7 +182,7 @@ def generate_auth_code_link(state: str, force_verify: bool = False) -> str:
     params = [
         f"client_id={os.getenv('THINVITE_TWITCH_ID')}",
         f"force_verify={'true' if force_verify else 'false'}",
-        f"redirect_uri={urllib.parse.quote('https://thinvite.sourk9.com/api/twitch/auth_code')}",
+        f"redirect_uri={urllib.parse.quote(_SITE_URL + '/api/twitch/auth_code')}",
         "response_type=code",
         f"scope={urllib.parse.quote(_STREAMER_SCOPE)}",
         f"state={state}",
@@ -198,7 +200,7 @@ async def get_auth_token(code: str) -> dict:
                 "client_secret": os.getenv("THINVITE_TWITCH_SECRET"),
                 "code": code,
                 "grant_type": "authorization_code",
-                "redirect_uri": "https://thinvite.sourk9.com/api/twitch/auth_code",
+                "redirect_uri": _SITE_URL + "/api/twitch/auth_code",
             },
         ) as resp:
             res = await resp.json()
@@ -320,7 +322,7 @@ def generate_viewer_auth_link(state: str) -> str:
     params = [
         f"client_id={os.getenv('THINVITE_TWITCH_ID')}",
         "force_verify=true",
-        f"redirect_uri={urllib.parse.quote('https://thinvite.sourk9.com/api/twitch/viewer_auth')}",
+        f"redirect_uri={urllib.parse.quote(_SITE_URL + '/api/twitch/viewer_auth')}",
         "response_type=code",
         "scope=user:read:email",
         f"state={state}",
@@ -338,7 +340,7 @@ async def get_viewer_token(code: str) -> dict:
                 "client_secret": os.getenv("THINVITE_TWITCH_SECRET"),
                 "code": code,
                 "grant_type": "authorization_code",
-                "redirect_uri": "https://thinvite.sourk9.com/api/twitch/viewer_auth",
+                "redirect_uri": _SITE_URL + "/api/twitch/viewer_auth",
             },
         ) as resp:
             res = await resp.json()

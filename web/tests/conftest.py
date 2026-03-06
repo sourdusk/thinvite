@@ -20,8 +20,9 @@ def env_vars(monkeypatch):
     monkeypatch.setenv("MAILJET_SENDER_EMAIL", "noreply@test.thinvite.com")
     monkeypatch.setenv("TURNSTILE_SITE_KEY", "test_site_key")
     monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test_turnstile_secret")
+    monkeypatch.setenv("NICEGUI_STORAGE_SECRET", "test_storage_secret")
     monkeypatch.setenv("THINVITE_EVENTSUB_SECRET", "test_eventsub_secret")
-    monkeypatch.setenv("THINVITE_CALLBACK_URL", "https://test.thinvite.com")
+    monkeypatch.setenv("SITE_URL", "https://test.thinvite.com")
 
 
 # ---------------------------------------------------------------------------

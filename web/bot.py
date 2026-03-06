@@ -36,7 +36,7 @@ async def subscribe(user_record: dict) -> bool:
         logger.error(f"Cannot subscribe for {sess_id}: failed to obtain app access token")
         return False
 
-    callback_url = os.getenv("THINVITE_CALLBACK_URL", "").rstrip("/") + "/eventsub/callback"
+    callback_url = os.getenv("SITE_URL", "").rstrip("/") + "/eventsub/callback"
     secret = os.getenv("THINVITE_EVENTSUB_SECRET", "")
 
     sub_id = await twitch_api.create_eventsub_subscription(
@@ -120,7 +120,7 @@ async def recover_subscriptions() -> None:
         logger.error("Cannot recover subscriptions: failed to obtain app access token")
         return
 
-    callback_url = os.getenv("THINVITE_CALLBACK_URL", "").rstrip("/") + "/eventsub/callback"
+    callback_url = os.getenv("SITE_URL", "").rstrip("/") + "/eventsub/callback"
     secret = os.getenv("THINVITE_EVENTSUB_SECRET", "")
 
     for user in users:

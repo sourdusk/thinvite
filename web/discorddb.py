@@ -12,6 +12,8 @@ logger = logging.getLogger()
 
 load_dotenv()
 
+_SITE_URL = os.getenv("SITE_URL", "")
+
 
 async def get_user_guilds(token: str) -> list:
     """Return partial guild objects for all guilds the user belongs to."""
@@ -83,7 +85,7 @@ async def get_discord_token(code: str) -> str:
                 "client_secret": os.getenv("THINVITE_DISCORD_SECRET"),
                 "code": code,
                 "grant_type": "authorization_code",
-                "redirect_uri": "https://thinvite.sourk9.com/api/discord",
+                "redirect_uri": _SITE_URL + "/api/discord",
             },
         ) as resp:
             res = await resp.json()
