@@ -15,6 +15,13 @@ load_dotenv()
 
 _TIMEOUT = aiohttp.ClientTimeout(total=10)
 
+# Scopes required for streamers.  The manage scope is needed to CANCEL or
+# FULFILL redemptions via the Helix API; read-only is not sufficient.
+_STREAMER_SCOPE = (
+    "channel:read:redemptions channel:manage:redemptions "
+    "channel:bot chat:read chat:edit user:write:chat"
+)
+
 
 def generate_auth_code_link(state: str, force_verify: bool = False) -> str:
     params = [
@@ -22,7 +29,7 @@ def generate_auth_code_link(state: str, force_verify: bool = False) -> str:
         f"force_verify={'true' if force_verify else 'false'}",
         f"redirect_uri={urllib.parse.quote('https://thinvite.sourk9.com/api/twitch/auth_code')}",
         "response_type=code",
-        "scope=channel:read:redemptions channel:bot chat:read chat:edit user:write:chat",
+        f"scope={urllib.parse.quote(_STREAMER_SCOPE)}",
         f"state={state}",
     ]
     param_string = "&".join(params)
@@ -66,11 +73,12 @@ async def get_user_info(token: str) -> dict:
             return None
 
 
-async def get_channel_redeems(sess_id: str) -> dict:
+async def get_channel_redeems(sess_id: str) -> list | None:
+    """Return the full list of custom reward objects, or None on error."""
     user = await get_user_from_db(sess_id)
     if user is None:
         return None
-    id = user["twitch_user_id"]
+    broadcaster_id = user["twitch_user_id"]
     token = user["twitch_auth_token"]
     async with aiohttp.ClientSession(
         timeout=_TIMEOUT,
@@ -80,11 +88,12 @@ async def get_channel_redeems(sess_id: str) -> dict:
         }
     ) as session:
         async with session.get(
-            f"https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id={id}"
+            f"https://api.twitch.tv/helix/channel_points/custom_rewards"
+            f"?broadcaster_id={broadcaster_id}"
         ) as resp:
             res = await resp.json()
             if res is not None and "data" in res:
-                return {x["id"]: x["title"] for x in res["data"]}
+                return res["data"]
             return None
 
 
@@ -229,3 +238,90 @@ async def get_set_redeem(sess_id: str) -> str:
             if res is not None and res[0] is not None:
                 return res[0]
             return None
+
+
+async def update_reward_queue_setting(
+    sess_id: str, reward_id: str, skip_queue: bool
+) -> bool:
+    """Set should_redemptions_skip_request_queue on a custom reward."""
+    if not sanitize.is_valid_uuid(reward_id):
+        return False
+    user = await get_user_from_db(sess_id)
+    if user is None:
+        return False
+    broadcaster_id = user["twitch_user_id"]
+    token = user["twitch_auth_token"]
+    async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
+        headers={
+            "client-id": os.getenv("THINVITE_TWITCH_ID"),
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    ) as session:
+        async with session.patch(
+            f"https://api.twitch.tv/helix/channel_points/custom_rewards"
+            f"?broadcaster_id={broadcaster_id}&id={reward_id}",
+            json={"should_redemptions_skip_request_queue": skip_queue},
+        ) as resp:
+            if resp.status != 200:
+                logger.error(
+                    f"Failed to update reward queue setting: {resp.status} {await resp.text()}"
+                )
+                return False
+            return True
+
+
+async def cancel_redemption(
+    broadcaster_id: str, reward_id: str, redemption_id: str, token: str
+) -> bool:
+    """Mark a channel point redemption as CANCELED (refunds the viewer's points)."""
+    async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
+        headers={
+            "client-id": os.getenv("THINVITE_TWITCH_ID"),
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    ) as session:
+        async with session.patch(
+            f"https://api.twitch.tv/helix/channel_points/custom_rewards/redemptions"
+            f"?broadcaster_id={broadcaster_id}&reward_id={reward_id}&id={redemption_id}",
+            json={"status": "CANCELED"},
+        ) as resp:
+            if resp.status != 200:
+                logger.error(
+                    f"Failed to cancel redemption {redemption_id}: {resp.status} {await resp.text()}"
+                )
+                return False
+            return True
+
+
+async def fulfill_redemption(
+    streamer_sess_id: str, reward_id: str, redemption_id: str
+) -> bool:
+    """Mark a channel point redemption as FULFILLED via the Twitch API."""
+    user = await db.get_user_by_session_id(streamer_sess_id)
+    if user is None:
+        return False
+    broadcaster_id = user["twitch_user_id"]
+    token = user["twitch_auth_token"]
+    async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
+        headers={
+            "client-id": os.getenv("THINVITE_TWITCH_ID"),
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    ) as session:
+        async with session.patch(
+            f"https://api.twitch.tv/helix/channel_points/custom_rewards/redemptions"
+            f"?broadcaster_id={broadcaster_id}&reward_id={reward_id}&id={redemption_id}",
+            json={"status": "FULFILLED"},
+        ) as resp:
+            if resp.status != 200:
+                logger.error(
+                    f"Failed to fulfill redemption {redemption_id}: {resp.status} {await resp.text()}"
+                )
+                return False
+            return True

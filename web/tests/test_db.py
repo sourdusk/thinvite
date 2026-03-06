@@ -53,7 +53,15 @@ async def test_add_redemption_executes(mock_pool):
     cur.execute.assert_called_once()
     sql, params = cur.execute.call_args[0]
     assert "INSERT INTO redemptions" in sql
-    assert params == ("streamer_sess", "viewer_id", "viewer_name")
+    assert params == ("streamer_sess", "viewer_id", "viewer_name", None, None)
+
+
+async def test_add_redemption_with_twitch_ids(mock_pool):
+    _, cur = mock_pool
+    await db.add_redemption("streamer_sess", "viewer_id", "viewer_name", "redeem-id", "reward-id")
+    sql, params = cur.execute.call_args[0]
+    assert "twitch_redemption_id" in sql
+    assert params == ("streamer_sess", "viewer_id", "viewer_name", "redeem-id", "reward-id")
 
 
 # ---------------------------------------------------------------------------
@@ -97,21 +105,82 @@ async def test_fulfill_redemption_updates(mock_pool):
 
 
 # ---------------------------------------------------------------------------
-# revoke_redemption
+# has_pending_redemption
 # ---------------------------------------------------------------------------
-async def test_revoke_redemption_updates(mock_pool):
+async def test_has_pending_redemption_true(mock_pool_factory):
+    mock_pool_factory(fetchone={"id": 1})
+    result = await db.has_pending_redemption("streamer_sess", "viewer_id")
+    assert result is True
+
+
+async def test_has_pending_redemption_false(mock_pool_factory):
+    mock_pool_factory(fetchone=None)
+    result = await db.has_pending_redemption("streamer_sess", "viewer_id")
+    assert result is False
+
+
+async def test_has_pending_redemption_filters_fulfilled(mock_pool):
     _, cur = mock_pool
+    await db.has_pending_redemption("streamer_sess", "viewer_id")
+    sql, _ = cur.execute.call_args[0]
+    assert "fulfilled_at IS NULL" in sql
+    assert "revoked_at IS NULL" in sql
+
+
+# ---------------------------------------------------------------------------
+# revoke_redemption (now returns invite_url and does SELECT + UPDATE)
+# ---------------------------------------------------------------------------
+async def test_revoke_redemption_updates(mock_pool_factory):
+    _, cur = mock_pool_factory(fetchone={"invite_url": None})
     await db.revoke_redemption(7, "streamer_sess")
-    sql, params = cur.execute.call_args[0]
-    assert "revoked_at" in sql
+    assert cur.execute.call_count == 2
+    update_sql, params = cur.execute.call_args_list[1][0]
+    assert "revoked_at" in update_sql
     assert params == (7, "streamer_sess")
 
 
-async def test_revoke_redemption_includes_ownership_check(mock_pool):
-    _, cur = mock_pool
+async def test_revoke_redemption_returns_invite_url(mock_pool_factory):
+    _, cur = mock_pool_factory(fetchone={"invite_url": "https://discord.gg/abc"})
+    result = await db.revoke_redemption(1, "streamer_sess")
+    assert result == "https://discord.gg/abc"
+
+
+async def test_revoke_redemption_no_row_returns_none(mock_pool_factory):
+    mock_pool_factory(fetchone=None)
+    result = await db.revoke_redemption(999, "other_sess")
+    assert result is None
+
+
+async def test_revoke_redemption_includes_ownership_check(mock_pool_factory):
+    _, cur = mock_pool_factory(fetchone={"invite_url": None})
     await db.revoke_redemption(42, "owner_sess")
-    sql, _ = cur.execute.call_args[0]
-    assert "streamer_session_id" in sql
+    select_sql, _ = cur.execute.call_args_list[0][0]
+    assert "streamer_session_id" in select_sql
+
+
+# ---------------------------------------------------------------------------
+# revoke_all_pending_redemptions
+# ---------------------------------------------------------------------------
+async def test_revoke_all_pending_returns_list(mock_pool_factory):
+    pending = [{"id": 1, "invite_url": None}, {"id": 2, "invite_url": "https://discord.gg/x"}]
+    _, cur = mock_pool_factory(fetchall=pending)
+    result = await db.revoke_all_pending_redemptions("streamer_sess")
+    assert result == pending
+
+
+async def test_revoke_all_pending_issues_update(mock_pool_factory):
+    pending = [{"id": 1, "invite_url": None}]
+    _, cur = mock_pool_factory(fetchall=pending)
+    await db.revoke_all_pending_redemptions("streamer_sess")
+    assert cur.execute.call_count == 2
+    update_sql, _ = cur.execute.call_args_list[1][0]
+    assert "revoked_at" in update_sql
+
+
+async def test_revoke_all_pending_empty_skips_update(mock_pool_factory):
+    _, cur = mock_pool_factory(fetchall=[])
+    await db.revoke_all_pending_redemptions("streamer_sess")
+    assert cur.execute.call_count == 1  # only SELECT, no UPDATE
 
 
 # ---------------------------------------------------------------------------
@@ -287,3 +356,58 @@ async def test_rotate_session_does_not_use_select(mock_pool):
     await db.rotate_session("old_id", "new_id")
     for call in cur.execute.call_args_list:
         assert "SELECT" not in call[0][0].upper()
+
+
+# ---------------------------------------------------------------------------
+# get_expired_pending_redemptions
+# ---------------------------------------------------------------------------
+async def test_get_expired_pending_redemptions_returns_list(mock_pool_factory):
+    rows = [
+        {
+            "id": 1,
+            "twitch_redemption_id": "rid1",
+            "twitch_reward_id": "rwid1",
+            "broadcaster_id": "b1",
+            "token": "tok1",
+        }
+    ]
+    mock_pool_factory(fetchall=rows)
+    result = await db.get_expired_pending_redemptions()
+    assert result == rows
+
+
+async def test_get_expired_pending_redemptions_empty(mock_pool_factory):
+    mock_pool_factory(fetchall=[])
+    result = await db.get_expired_pending_redemptions()
+    assert result == []
+
+
+async def test_get_expired_pending_redemptions_query_filters(mock_pool):
+    """The SQL must guard against manual, fulfilled, and revoked rows."""
+    _, cur = mock_pool
+    await db.get_expired_pending_redemptions()
+    sql = cur.execute.call_args[0][0]
+    assert "fulfilled_at IS NULL" in sql
+    assert "revoked_at IS NULL" in sql
+    assert "is_manual = FALSE" in sql
+    assert "twitch_redemption_id IS NOT NULL" in sql
+    assert "INTERVAL 24 HOUR" in sql
+
+
+# ---------------------------------------------------------------------------
+# expire_redemption
+# ---------------------------------------------------------------------------
+async def test_expire_redemption_issues_update(mock_pool):
+    _, cur = mock_pool
+    await db.expire_redemption(42)
+    cur.execute.assert_called_once()
+    sql, params = cur.execute.call_args[0]
+    assert "revoked_at" in sql
+    assert params == (42,)
+
+
+async def test_expire_redemption_targets_correct_id(mock_pool):
+    _, cur = mock_pool
+    await db.expire_redemption(99)
+    _, params = cur.execute.call_args[0]
+    assert params[0] == 99

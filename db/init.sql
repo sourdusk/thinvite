@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS redemptions (
     viewer_twitch_user_name VARCHAR(255),
     invite_url VARCHAR(255),
     is_manual BOOLEAN DEFAULT FALSE,
+    twitch_redemption_id VARCHAR(255),
+    twitch_reward_id VARCHAR(255),
     redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fulfilled_at TIMESTAMP NULL,
     revoked_at TIMESTAMP NULL,

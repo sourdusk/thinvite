@@ -11,8 +11,9 @@ from tests.conftest import make_aiohttp_response, make_aiohttp_session
 # ---------------------------------------------------------------------------
 def test_generate_auth_code_link_contains_scope():
     url = twitch.generate_auth_code_link("mystate")
-    assert "user:write:chat" in url
-    assert "channel:read:redemptions" in url
+    assert "user%3Awrite%3Achat" in url or "user:write:chat" in url
+    assert "channel%3Aread%3Aredemptions" in url or "channel:read:redemptions" in url
+    assert "channel%3Amanage%3Aredemptions" in url or "channel:manage:redemptions" in url
     assert "state=mystate" in url
     assert "force_verify=false" in url
 
@@ -272,7 +273,7 @@ async def test_get_set_redeem_no_row(mock_pool):
 
 
 # ---------------------------------------------------------------------------
-# get_channel_redeems
+# get_channel_redeems  (returns full reward object list)
 # ---------------------------------------------------------------------------
 async def test_get_channel_redeems_no_user(mock_pool_factory):
     mock_pool_factory(fetchone=None)
@@ -282,12 +283,20 @@ async def test_get_channel_redeems_no_user(mock_pool_factory):
 
 async def test_get_channel_redeems_success(mock_pool_factory):
     mock_pool_factory(fetchone={"twitch_user_id": "u1", "twitch_auth_token": "tok"})
-    payload = {"data": [{"id": "rid1", "title": "Discord Invite"}]}
+    reward = {
+        "id": "rid1",
+        "title": "Discord Invite",
+        "should_redemptions_skip_request_queue": False,
+    }
+    payload = {"data": [reward]}
     resp = make_aiohttp_response(payload)
     sess = make_aiohttp_session(get_resp=resp)
     with patch("aiohttp.ClientSession", return_value=sess):
         result = await twitch.get_channel_redeems("sess")
-    assert result == {"rid1": "Discord Invite"}
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["id"] == "rid1"
+    assert result[0]["title"] == "Discord Invite"
 
 
 async def test_get_channel_redeems_empty_data(mock_pool_factory):
@@ -296,4 +305,101 @@ async def test_get_channel_redeems_empty_data(mock_pool_factory):
     sess = make_aiohttp_session(get_resp=resp)
     with patch("aiohttp.ClientSession", return_value=sess):
         result = await twitch.get_channel_redeems("sess")
-    assert result == {}
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# update_reward_queue_setting
+# ---------------------------------------------------------------------------
+async def test_update_reward_queue_invalid_uuid_rejected(mock_pool_factory):
+    mock_pool_factory(fetchone={"twitch_user_id": "u1", "twitch_auth_token": "tok"})
+    result = await twitch.update_reward_queue_setting("sess", "not-a-uuid", False)
+    assert result is False
+
+
+async def test_update_reward_queue_no_user(mock_pool_factory):
+    mock_pool_factory(fetchone=None)
+    result = await twitch.update_reward_queue_setting(
+        "sess", "550e8400-e29b-41d4-a716-446655440000", False
+    )
+    assert result is False
+
+
+async def test_update_reward_queue_success(mock_pool_factory):
+    mock_pool_factory(fetchone={"twitch_user_id": "u1", "twitch_auth_token": "tok"})
+    resp = make_aiohttp_response({}, status=200)
+    sess = MagicMock()
+    sess.__aenter__ = AsyncMock(return_value=sess)
+    sess.__aexit__ = AsyncMock(return_value=False)
+    sess.patch = MagicMock(return_value=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.update_reward_queue_setting(
+            "sess", "550e8400-e29b-41d4-a716-446655440000", False
+        )
+    assert result is True
+
+
+async def test_update_reward_queue_failure(mock_pool_factory):
+    mock_pool_factory(fetchone={"twitch_user_id": "u1", "twitch_auth_token": "tok"})
+    resp = make_aiohttp_response({"error": "Forbidden"}, status=403)
+    resp.text = AsyncMock(return_value="Forbidden")
+    sess = MagicMock()
+    sess.__aenter__ = AsyncMock(return_value=sess)
+    sess.__aexit__ = AsyncMock(return_value=False)
+    sess.patch = MagicMock(return_value=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.update_reward_queue_setting(
+            "sess", "550e8400-e29b-41d4-a716-446655440000", False
+        )
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# cancel_redemption
+# ---------------------------------------------------------------------------
+async def test_cancel_redemption_success():
+    resp = make_aiohttp_response({}, status=200)
+    sess = MagicMock()
+    sess.__aenter__ = AsyncMock(return_value=sess)
+    sess.__aexit__ = AsyncMock(return_value=False)
+    sess.patch = MagicMock(return_value=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.cancel_redemption("bid", "rwid", "rdid", "token")
+    assert result is True
+    call_kwargs = sess.patch.call_args[1]
+    assert call_kwargs["json"]["status"] == "CANCELED"
+
+
+async def test_cancel_redemption_failure():
+    resp = make_aiohttp_response({"error": "not found"}, status=404)
+    resp.text = AsyncMock(return_value="not found")
+    sess = MagicMock()
+    sess.__aenter__ = AsyncMock(return_value=sess)
+    sess.__aexit__ = AsyncMock(return_value=False)
+    sess.patch = MagicMock(return_value=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.cancel_redemption("bid", "rwid", "rdid", "token")
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# fulfill_redemption
+# ---------------------------------------------------------------------------
+async def test_fulfill_redemption_no_user(mock_pool_factory):
+    mock_pool_factory(fetchone=None)
+    result = await twitch.fulfill_redemption("sess", "rw-id", "rd-id")
+    assert result is False
+
+
+async def test_fulfill_redemption_success(mock_pool_factory):
+    mock_pool_factory(fetchone={"twitch_user_id": "u1", "twitch_auth_token": "tok"})
+    resp = make_aiohttp_response({}, status=200)
+    sess = MagicMock()
+    sess.__aenter__ = AsyncMock(return_value=sess)
+    sess.__aexit__ = AsyncMock(return_value=False)
+    sess.patch = MagicMock(return_value=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.fulfill_redemption("sess", "rw-id", "rd-id")
+    assert result is True
+    call_kwargs = sess.patch.call_args[1]
+    assert call_kwargs["json"]["status"] == "FULFILLED"

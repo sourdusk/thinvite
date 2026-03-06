@@ -362,3 +362,4 @@ async def test_create_invite_invalid_snowflake_rejected():
 async def test_create_invite_empty_snowflake_rejected():
     result = await discorddb.create_invite("")
     assert result is None
+

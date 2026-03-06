@@ -12,6 +12,7 @@ from collections import defaultdict
 from dotenv import load_dotenv
 from nicegui import app, ui
 from fastapi import Request
+from fastapi.responses import PlainTextResponse, JSONResponse
 from starlette.datastructures import MutableHeaders
 
 
@@ -20,6 +21,7 @@ load_dotenv()
 import bot
 import captcha
 import discorddb
+import expiry
 import mail
 import twitch
 import db
@@ -49,6 +51,19 @@ class _SecurityHeadersMiddleware:
                 headers["X-Frame-Options"] = "SAMEORIGIN"
                 headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
                 headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+                headers["Content-Security-Policy"] = (
+                    "default-src 'self'; "
+                    "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+                    "https://challenges.cloudflare.com; "
+                    "style-src 'self' 'unsafe-inline'; "
+                    "img-src 'self' data: https:; "
+                    "font-src 'self' data:; "
+                    "connect-src 'self' wss://thinvite.sourk9.com; "
+                    "frame-src https://challenges.cloudflare.com; "
+                    "object-src 'none'; "
+                    "base-uri 'self'; "
+                    "form-action 'self';"
+                )
                 # Don't prevent caching of versioned static assets. NiceGUI's
                 # JS files (vue, quasar, etc.) must load from cache so Firefox
                 # serves them in order; parallel HTTP/2 fetches arrive out of
@@ -243,6 +258,33 @@ def footer():
 
 
 # ---------------------------------------------------------------------------
+# Simple HTTP endpoints (not NiceGUI pages)
+# ---------------------------------------------------------------------------
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt():
+    return PlainTextResponse(
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "Disallow: /logout\n"
+    )
+
+
+@app.get("/health", include_in_schema=False)
+async def health_check():
+    db_ok = False
+    try:
+        async with db._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT 1")
+                db_ok = True
+    except Exception:
+        pass
+    status = "ok" if db_ok else "degraded"
+    return JSONResponse({"status": status, "db": db_ok}, status_code=200)
+
+
+# ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
 @ui.page("/", dark=True)
@@ -316,10 +358,11 @@ async def begin_page():
         ui.navigate.to(twitch.generate_auth_code_link(state, force_verify=force))
 
     header(show_logout=True)
-    with ui.row().classes("window-width row justify-center items-center"):
-        ui.label("Begin by logging in to both Twitch and Discord.").classes(
-            "text-h3 text-center text-justify"
-        )
+    if not (twitch_user_exists and discord_connected):
+        with ui.row().classes("window-width row justify-center items-center"):
+            ui.label("Begin by logging in to both Twitch and Discord.").classes(
+                "text-h3 text-center text-justify"
+            )
 
     # Row with buttons
     with ui.row().classes("window-width row justify-center items-start").style(
@@ -345,19 +388,21 @@ async def begin_page():
                     "Disconnect Twitch", color="negative", on_click=disconnect_twitch
                 ).props("flat size=sm").classes("q-mt-sm")
 
-                redeems = await twitch.get_channel_redeems(_sess_id())
+                redeems_raw = await twitch.get_channel_redeems(_sess_id())
 
-                if redeems is None:
+                if redeems_raw is None:
                     ui.label(
                         "Could not load channel point redeems — Twitch API timed out. "
                         "Please refresh the page."
                     ).classes("text-body2 text-center text-negative")
                 else:
+                    redeems = {r["id"]: r["title"] for r in redeems_raw}
+                    redeems_full = {r["id"]: r for r in redeems_raw}
                     current_redeem = await twitch.get_set_redeem(_sess_id())
                     if current_redeem is None and redeems:
                         current_redeem = (
-                            next((id for id, title in redeems.items() if "discord" in title.lower()), None)
-                            or next((id for id, title in redeems.items() if "server" in title.lower()), None)
+                            next((rid for rid, title in redeems.items() if "discord" in title.lower()), None)
+                            or next((rid for rid, title in redeems.items() if "server" in title.lower()), None)
                             or next(iter(redeems))
                         )
                         await twitch.update_twitch_redeem(_sess_id(), current_redeem)
@@ -366,17 +411,46 @@ async def begin_page():
                     sel = ui.select(redeems, value=current_redeem).classes("fit-width")
 
                     async def update_redeem():
-                        if sel.value == current_redeem:
+                        new_id = sel.value
+                        if new_id == current_redeem:
                             ui.notify("That redeem is already selected.", type="info")
                             return
-                        res = await twitch.update_twitch_redeem(
-                            _sess_id(), sel.value
-                        )
-                        if res:
-                            ui.notify("Redeem changed!")
+
+                        reward = redeems_full.get(new_id, {})
+                        skips_queue = reward.get("should_redemptions_skip_request_queue", False)
+
+                        async def _apply_update():
+                            # Always disable skip_request_queue so redemptions
+                            # stay in the queue where Thinvite can manage them.
+                            await twitch.update_reward_queue_setting(
+                                _sess_id(), new_id, False
+                            )
+                            ok = await twitch.update_twitch_redeem(_sess_id(), new_id)
+                            if ok:
+                                ui.notify("Redeem updated!", type="positive")
+                                ui.navigate.to("/begin")
+                            else:
+                                ui.notify("Failed to update redeem.", type="negative")
+
+                        if skips_queue:
+                            with ui.dialog() as skip_dlg, ui.card().classes("q-pa-md"):
+                                ui.label("Queue setting conflict").classes("text-h6")
+                                ui.label(
+                                    "This redeem currently skips the request queue. "
+                                    "Thinvite needs 'Skip Request Queue' set to Off so "
+                                    "it can manage redemptions. Proceed and change it?"
+                                ).classes("q-mt-sm text-body2")
+                                with ui.row().classes("justify-end q-mt-lg gap-sm"):
+                                    ui.button("Cancel", on_click=skip_dlg.close).props("flat")
+
+                                    async def _confirm_queue():
+                                        skip_dlg.close()
+                                        await _apply_update()
+
+                                    ui.button("Proceed", on_click=_confirm_queue, color="primary")
+                            skip_dlg.open()
                         else:
-                            app.storage.user["error"] = "Failed to update redeem"
-                            ui.navigate.to("/begin")
+                            await _apply_update()
 
                     ui.button(color="#6441a5", text="Submit", on_click=update_redeem)
         else:
@@ -462,12 +536,13 @@ async def begin_page():
                 ui.notify(f"{viewer['login']} can now claim an invite at /redeem.", type="positive")
                 redemptions_table.rows = await _load_rows(_sess_id())
                 redemptions_table.update()
+                _refresh_stats(redemptions_table.rows)
 
             ui.button("Add", on_click=add_manual).props("color=primary")
 
         ui.separator().classes("q-my-lg")
 
-        with ui.row().classes("window-width row justify-center items-center"):
+        with ui.row().classes("window-width row justify-center items-center q-mt-sm q-mb-xs"):
             ui.label("Redemption history").classes("text-h5")
 
         columns = [
@@ -506,7 +581,54 @@ async def begin_page():
                 })
             return rows
 
+        # Statistics row
+        def _compute_stats(rows):
+            return {
+                "total": len(rows),
+                "pending": sum(1 for r in rows if r["status"] == "Pending"),
+                "fulfilled": sum(1 for r in rows if r["status"] == "Fulfilled"),
+                "revoked": sum(1 for r in rows if r["status"] == "Revoked"),
+            }
+
         rows = await _load_rows(_sess_id())
+        stats = _compute_stats(rows)
+
+        with ui.row().classes("window-width row justify-center items-center q-mb-sm gap-xl"):
+            stat_total = ui.label(f"Total: {stats['total']}").classes("text-body2")
+            stat_pending = ui.label(f"Pending: {stats['pending']}").classes("text-body2 text-warning")
+            stat_fulfilled = ui.label(f"Fulfilled: {stats['fulfilled']}").classes("text-body2 text-positive")
+            stat_revoked = ui.label(f"Revoked: {stats['revoked']}").classes("text-body2 text-grey-6")
+
+        # Bulk-revoke button
+        _current_sess = _sess_id()
+
+        with ui.dialog() as bulk_revoke_dialog, ui.card().classes("q-pa-md"):
+            ui.label("Revoke all pending invites").classes("text-h6 text-negative")
+            ui.label(
+                "This will revoke all pending (unclaimed) redemptions and attempt to "
+                "invalidate any associated Discord invite links."
+            ).classes("q-mt-sm text-body2")
+            with ui.row().classes("justify-end q-mt-lg gap-sm"):
+                ui.button("Cancel", on_click=bulk_revoke_dialog.close).props("flat")
+
+                async def _confirm_bulk_revoke():
+                    bulk_revoke_dialog.close()
+                    revoked = await db.revoke_all_pending_redemptions(_current_sess)
+                    redemptions_table.rows = await _load_rows(_current_sess)
+                    redemptions_table.update()
+                    _refresh_stats(redemptions_table.rows)
+                    ui.notify(
+                        f"Revoked {len(revoked)} pending redemption(s).", type="positive"
+                    )
+
+                ui.button("Revoke all", color="negative", on_click=_confirm_bulk_revoke)
+
+        with ui.row().classes("window-width row justify-center items-center q-mb-md gap-sm"):
+            ui.button(
+                "Revoke all pending", icon="block", color="negative",
+                on_click=bulk_revoke_dialog.open,
+            ).props("outline size=sm")
+
         redemptions_table = ui.table(columns=columns, rows=rows, row_key="id").classes(
             "window-width q-px-xl"
         )
@@ -526,16 +648,32 @@ async def begin_page():
             </q-td>
         """)
 
+        def _refresh_stats(current_rows):
+            s = _compute_stats(current_rows)
+            stat_total.set_text(f"Total: {s['total']}")
+            stat_pending.set_text(f"Pending: {s['pending']}")
+            stat_fulfilled.set_text(f"Fulfilled: {s['fulfilled']}")
+            stat_revoked.set_text(f"Revoked: {s['revoked']}")
+
         async def handle_revoke(e):
             rid = e.args.get("id")
             if not sanitize.is_positive_int(rid):
                 ui.notify("Invalid request.", type="negative")
                 return
-            await db.revoke_redemption(int(rid), _sess_id())
-            redemptions_table.rows = await _load_rows(_sess_id())
+            await db.revoke_redemption(int(rid), _current_sess)
+            redemptions_table.rows = await _load_rows(_current_sess)
             redemptions_table.update()
+            _refresh_stats(redemptions_table.rows)
 
         redemptions_table.on("revoke", handle_revoke)
+
+        # Auto-refresh every 30 seconds
+        async def _auto_refresh():
+            redemptions_table.rows = await _load_rows(_current_sess)
+            redemptions_table.update()
+            _refresh_stats(redemptions_table.rows)
+
+        ui.timer(30, _auto_refresh)
 
     # -----------------------------------------------------------------------
     # Delete all data (only shown when the user has a Twitch account connected)
@@ -782,16 +920,115 @@ async def viewer_auth_page(request: Request):
         ui.navigate.to("/redeem")
         return
 
-    redemption = redemptions[0]
-    invite_url = await discorddb.create_invite(redemption["discord_server_id"])
-    if invite_url is None:
-        app.storage.user["viewer_error"] = "Failed to create your Discord invite. Please try again."
+    if len(redemptions) == 1:
+        redemption = redemptions[0]
+        invite_url = await discorddb.create_invite(redemption["discord_server_id"])
+        if invite_url is None:
+            app.storage.user["viewer_error"] = "Failed to create your Discord invite. Please try again."
+            ui.navigate.to("/redeem")
+            return
+
+        await db.fulfill_redemption(redemption["id"], invite_url)
+        if redemption.get("twitch_redemption_id") and redemption.get("twitch_reward_id"):
+            await twitch.fulfill_redemption(
+                redemption["streamer_session_id"],
+                redemption["twitch_reward_id"],
+                redemption["twitch_redemption_id"],
+            )
+        ui.navigate.to(invite_url)
+    else:
+        # Multiple pending redemptions — let the viewer pick which streamer's
+        # invite to claim.  Store just the display data in the session; the
+        # full record is re-fetched and re-verified at claim time.
+        app.storage.user["viewer_user_id"] = viewer_user_id
+        app.storage.user["viewer_picks"] = [
+            {"id": r["id"], "streamer_name": r["streamer_name"]}
+            for r in redemptions
+        ]
+        ui.navigate.to("/redeem/pick")
+    return
+
+
+@ui.page("/redeem/pick", dark=True)
+async def redeem_pick_page():
+    """Shown when a viewer has pending redemptions from multiple streamers."""
+    viewer_user_id = app.storage.user.get("viewer_user_id")
+    picks = app.storage.user.get("viewer_picks")
+
+    if not viewer_user_id or not picks:
         ui.navigate.to("/redeem")
         return
 
-    await db.fulfill_redemption(redemption["id"], invite_url)
-    ui.navigate.to(invite_url)
-    return
+    header()
+    with ui.column().classes("w-full items-center q-pa-xl").style(
+        "max-width: 600px; margin: auto"
+    ):
+        ui.label("Choose your invite").classes("text-h4 text-center q-mb-md")
+        ui.label(
+            "You have pending redemptions from multiple streamers. "
+            "Pick the one you'd like to claim."
+        ).classes("text-body1 text-center q-mb-xl")
+
+        options = {str(r["id"]): r["streamer_name"] for r in picks}
+        sel = ui.select(options, label="Select a streamer").classes("w-full")
+
+        status_label = ui.label("").classes("text-body2 text-center q-mt-sm")
+
+        async def claim():
+            chosen_id_str = sel.value
+            if not chosen_id_str or not sanitize.is_positive_int(chosen_id_str):
+                ui.notify("Please select a streamer.", type="warning")
+                return
+
+            chosen_id = int(chosen_id_str)
+
+            # Re-query the DB to verify the redemption is still pending and
+            # still belongs to this viewer (guards against session-stuffing and
+            # redemptions that were revoked while the picker was open).
+            all_pending = await db.get_pending_redemptions_for_viewer(viewer_user_id)
+            redemption = next((r for r in all_pending if r["id"] == chosen_id), None)
+            if redemption is None:
+                ui.notify(
+                    "That redemption is no longer available. Please try again.",
+                    type="negative",
+                )
+                # Refresh the displayed options to reflect current state.
+                remaining = [r for r in all_pending]
+                if not remaining:
+                    app.storage.user.pop("viewer_user_id", None)
+                    app.storage.user.pop("viewer_picks", None)
+                    app.storage.user["viewer_error"] = "All your pending redemptions have been revoked."
+                    ui.navigate.to("/redeem")
+                else:
+                    app.storage.user["viewer_picks"] = [
+                        {"id": r["id"], "streamer_name": r["streamer_name"]}
+                        for r in remaining
+                    ]
+                    ui.navigate.to("/redeem/pick")
+                return
+
+            status_label.set_text("Creating your invite…")
+            invite_url = await discorddb.create_invite(redemption["discord_server_id"])
+            if invite_url is None:
+                status_label.set_text("")
+                ui.notify("Failed to create your Discord invite. Please try again.", type="negative")
+                return
+
+            await db.fulfill_redemption(redemption["id"], invite_url)
+            if redemption.get("twitch_redemption_id") and redemption.get("twitch_reward_id"):
+                await twitch.fulfill_redemption(
+                    redemption["streamer_session_id"],
+                    redemption["twitch_reward_id"],
+                    redemption["twitch_redemption_id"],
+                )
+
+            app.storage.user.pop("viewer_user_id", None)
+            app.storage.user.pop("viewer_picks", None)
+            ui.navigate.to(invite_url)
+
+        ui.button("Claim invite", on_click=claim, color="primary").classes("q-mt-lg")
+
+    footer()
 
 
 @ui.page("/contact", dark=True)
@@ -1153,6 +1390,7 @@ app.add_static_files('/static', 'static')
 async def startup():
     await db.init_pool()         # pool must be ready before any DB call
     await bot.start_all_listeners()
+    asyncio.create_task(expiry.start_expiry_loop())
 
 
 @app.on_shutdown
@@ -1200,6 +1438,19 @@ def _roboto_font_display_css() -> str:
 
 ui.add_head_html(
     '<meta name="description" content="Thinvite links Twitch channel point redemptions'
+    " to single-use Discord server invites \u2014 reward your viewers instantly.\">",
+    shared=True,
+)
+
+ui.add_head_html(
+    '<meta property="og:title" content="Thinvite \u2014 Secure Discord Invites via Twitch">'
+    '<meta property="og:description" content="Thinvite links Twitch channel point redemptions'
+    " to single-use Discord server invites \u2014 reward your viewers instantly.\">"
+    '<meta property="og:type" content="website">'
+    '<meta property="og:url" content="https://thinvite.sourk9.com">'
+    '<meta name="twitter:card" content="summary">'
+    '<meta name="twitter:title" content="Thinvite \u2014 Secure Discord Invites via Twitch">'
+    '<meta name="twitter:description" content="Thinvite links Twitch channel point redemptions'
     " to single-use Discord server invites \u2014 reward your viewers instantly.\">",
     shared=True,
 )

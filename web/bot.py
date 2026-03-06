@@ -8,6 +8,7 @@ from twitchAPI.eventsub.websocket import EventSubWebsocket
 from twitchAPI.type import AuthScope, MissingScopeException
 
 import db
+import twitch as twitch_api
 
 logger = logging.getLogger()
 
@@ -16,6 +17,7 @@ _needs_reauth: set = set()  # session_ids that failed due to missing scope
 
 SCOPES = [
     AuthScope.CHANNEL_READ_REDEMPTIONS,
+    AuthScope.CHANNEL_MANAGE_REDEMPTIONS,
     AuthScope.CHAT_READ,
     AuthScope.CHAT_EDIT,
     AuthScope.USER_WRITE_CHAT,
@@ -52,13 +54,29 @@ async def _on_redemption(sess_id: str, event) -> None:
 
     redeemer = event.event.user_name
     viewer_id = event.event.user_id
-
-    # Store the pending redemption so the viewer can claim it at /redeem.
-    await db.add_redemption(sess_id, viewer_id, redeemer)
+    twitch_redemption_id = event.event.id
+    twitch_reward_id = event.event.reward.id
 
     broadcaster_id = user["twitch_user_id"]
     token = user["twitch_auth_token"]
-    message = f"@{redeemer} Head to {SITE_URL}/redeem to claim your Discord invite!"
+
+    # Duplicate check — if the viewer already has a pending redemption, cancel
+    # this one immediately to refund their channel points.
+    if await db.has_pending_redemption(sess_id, viewer_id):
+        logger.info(
+            f"Duplicate redemption from {redeemer} for streamer {sess_id}, cancelling"
+        )
+        await twitch_api.cancel_redemption(
+            broadcaster_id, twitch_reward_id, twitch_redemption_id, token
+        )
+        return
+
+    # Store the pending redemption so the viewer can claim it at /redeem.
+    await db.add_redemption(
+        sess_id, viewer_id, redeemer, twitch_redemption_id, twitch_reward_id
+    )
+
+    message = f"@{redeemer} Head to {SITE_URL}/redeem to claim your Discord invite! You have 24 hours before it expires."
     await _send_chat_message(broadcaster_id, token, message)
 
 
