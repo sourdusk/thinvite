@@ -79,6 +79,8 @@ async def refresh_expiring_tokens() -> None:
     the new token back to the DB.  We only need to cover users whose listener
     is not running (e.g. the bot failed to start, or the user only uses the
     dashboard without an active stream session).
+
+    All eligible refreshes are issued concurrently via asyncio.gather().
     """
     try:
         users = await db.get_users_with_expiring_tokens()
@@ -86,18 +88,15 @@ async def refresh_expiring_tokens() -> None:
         logger.exception("Failed to fetch users with expiring Twitch tokens")
         return
 
-    if not users:
+    # Skip users whose bot listener is already handling refresh.
+    pending = [u for u in users if not bot.has_active_listener(u["session_id"])]
+    if not pending:
         return
 
-    logger.info(f"Refreshing Twitch tokens for up to {len(users)} user(s)")
+    logger.info(f"Refreshing Twitch tokens for {len(pending)} user(s)")
 
-    for user in users:
+    async def _refresh_one(user: dict) -> None:
         sess_id = user["session_id"]
-
-        # Bot listener handles its own refresh + DB update via callback.
-        if bot.has_active_listener(sess_id):
-            continue
-
         refresh_code = user["twitch_token_refresh_code"]
         try:
             result = await twitch_api.refresh_auth_token(refresh_code)
@@ -106,7 +105,7 @@ async def refresh_expiring_tokens() -> None:
                     f"Token refresh failed for session {sess_id}; "
                     "user may need to reconnect their Twitch account"
                 )
-                continue
+                return
             await db.update_twitch_auth_token(
                 sess_id,
                 result["access_token"],
@@ -116,6 +115,8 @@ async def refresh_expiring_tokens() -> None:
             logger.info(f"Token refreshed for session {sess_id}")
         except Exception:
             logger.exception(f"Error refreshing token for session {sess_id}")
+
+    await asyncio.gather(*(_refresh_one(u) for u in pending))
 
 
 # ---------------------------------------------------------------------------
