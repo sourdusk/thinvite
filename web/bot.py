@@ -80,6 +80,11 @@ async def _on_redemption(sess_id: str, event) -> None:
     await _send_chat_message(broadcaster_id, token, message)
 
 
+def has_active_listener(sess_id: str) -> bool:
+    """Return True if an EventSub listener is currently running for sess_id."""
+    return sess_id in _listeners
+
+
 async def start_listener(user_record: dict) -> None:
     sess_id = user_record["session_id"]
     await stop_listener(sess_id)
@@ -89,6 +94,21 @@ async def start_listener(user_record: dict) -> None:
             os.getenv("THINVITE_TWITCH_ID"),
             os.getenv("THINVITE_TWITCH_SECRET"),
         )
+
+        # When twitchAPI auto-refreshes the access token, write the new token
+        # back to the DB so that direct Helix API calls (outside the bot) also
+        # pick up the refreshed credentials.
+        async def _on_token_refresh(token: str, refresh_token: str) -> None:
+            logger.info(f"twitchAPI refreshed token for {sess_id}, updating DB")
+            import time as _time
+            await db.update_twitch_auth_token(
+                sess_id, token,
+                int(_time.time()) + 14400,  # Twitch tokens last ~4 hours
+                refresh_token,
+            )
+
+        twitch_client.user_auth_refresh_callback = _on_token_refresh
+
         await twitch_client.set_user_authentication(
             user_record["twitch_auth_token"],
             SCOPES,

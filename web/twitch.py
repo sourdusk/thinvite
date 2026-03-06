@@ -194,6 +194,28 @@ async def get_viewer_token(code: str) -> dict:
             return res
 
 
+async def refresh_auth_token(refresh_token: str) -> dict | None:
+    """Exchange a refresh token for a fresh Twitch access token.
+
+    Returns the full token response dict (contains access_token, expires_in,
+    refresh_token, …) or None if the refresh request fails.
+    """
+    async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+        async with session.post(
+            "https://id.twitch.tv/oauth2/token",
+            data={
+                "client_id": os.getenv("THINVITE_TWITCH_ID"),
+                "client_secret": os.getenv("THINVITE_TWITCH_SECRET"),
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+        ) as resp:
+            res = await resp.json()
+            if "access_token" not in res:
+                return None
+            return res
+
+
 async def revoke_token(token: str) -> None:
     async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
         await session.post(

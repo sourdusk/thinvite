@@ -403,3 +403,24 @@ async def test_fulfill_redemption_success(mock_pool_factory):
     assert result is True
     call_kwargs = sess.patch.call_args[1]
     assert call_kwargs["json"]["status"] == "FULFILLED"
+
+
+# ---------------------------------------------------------------------------
+# refresh_auth_token
+# ---------------------------------------------------------------------------
+async def test_refresh_auth_token_success():
+    payload = {"access_token": "newtok", "expires_in": 14400, "refresh_token": "newref"}
+    resp = make_aiohttp_response(payload)
+    sess = make_aiohttp_session(post_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.refresh_auth_token("oldref")
+    assert result["access_token"] == "newtok"
+    assert result["refresh_token"] == "newref"
+
+
+async def test_refresh_auth_token_failure_returns_none():
+    resp = make_aiohttp_response({"status": 400, "message": "Invalid refresh token"})
+    sess = make_aiohttp_session(post_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.refresh_auth_token("badref")
+    assert result is None
