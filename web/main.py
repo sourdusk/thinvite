@@ -23,6 +23,12 @@ from starlette.datastructures import MutableHeaders
 
 load_dotenv()
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 import bot
 import captcha
 import discorddb
@@ -36,10 +42,8 @@ logger = logging.getLogger()
 
 _SESSION_MAX_AGE_SECONDS = 30 * 24 * 3600  # 30 days
 
-# EventSub webhook secret and deduplication registry.
+# EventSub webhook secret — must be non-empty; asserted in startup().
 _EVENTSUB_SECRET = os.getenv("THINVITE_EVENTSUB_SECRET", "")
-# Maps message_id → unix expiry timestamp (pruned on every inbound event).
-_seen_msg_ids: dict[str, float] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -1449,13 +1453,9 @@ async def eventsub_callback(request: Request):
         return Response(status_code=403)
 
     # Deduplicate by message ID (Twitch may redeliver on network failure).
-    now = time.time()
-    expired = [k for k, v in _seen_msg_ids.items() if v < now]
-    for k in expired:
-        del _seen_msg_ids[k]
-    if msg_id in _seen_msg_ids:
+    # Persisted in DB so restarts don't open a redelivery window.
+    if await db.is_seen_eventsub_message(msg_id):
         return Response(status_code=204)
-    _seen_msg_ids[msg_id] = now + 600  # keep for 10 minutes
 
     try:
         payload = json.loads(raw_body)
@@ -1550,6 +1550,10 @@ app.add_static_files('/static', 'static')
 
 @app.on_startup
 async def startup():
+    if not os.getenv("NICEGUI_STORAGE_SECRET"):
+        raise RuntimeError("NICEGUI_STORAGE_SECRET must be set before starting")
+    if not _EVENTSUB_SECRET:
+        raise RuntimeError("THINVITE_EVENTSUB_SECRET must be set before starting")
     await db.init_pool()         # pool must be ready before any DB call
     await bot.recover_subscriptions()
     asyncio.create_task(expiry.start_expiry_loop())
