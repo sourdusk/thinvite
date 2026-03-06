@@ -13,12 +13,13 @@ logger = logging.getLogger()
 load_dotenv()
 
 _SITE_URL = os.getenv("SITE_URL", "")
+_TIMEOUT = aiohttp.ClientTimeout(total=10)
 
 
 async def get_user_guilds(token: str) -> list:
     """Return partial guild objects for all guilds the user belongs to."""
     async with aiohttp.ClientSession(
-        headers={"Authorization": f"Bearer {token}"}
+        timeout=_TIMEOUT, headers={"Authorization": f"Bearer {token}"}
     ) as session:
         async with session.get("https://discord.com/api/v10/users/@me/guilds") as resp:
             if resp.status != 200:
@@ -53,7 +54,7 @@ async def update_info(sess_id: str, code: str, guild_id: str) -> (bool, str):
     user_id = await get_user_info(token)
     if user_id is None:
         return (False, "Failed to get user info")
-    async with db._pool.acquire() as conn:
+    async with db._acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             # Only update the row that belongs to the current session.
             # Never look up or overwrite rows by guild_id — that would allow
@@ -76,7 +77,7 @@ async def update_info(sess_id: str, code: str, guild_id: str) -> (bool, str):
 
 async def get_discord_token(code: str) -> str:
     async with aiohttp.ClientSession(
-        headers={"Content-Type": "application/x-www-form-urlencoded"}
+        timeout=_TIMEOUT, headers={"Content-Type": "application/x-www-form-urlencoded"}
     ) as session:
         async with session.post(
             "https://discord.com/api/v10/oauth2/token",
@@ -100,7 +101,7 @@ async def create_invite(guild_id: str) -> str:
         return None
     bot_token = os.getenv("THINVITE_DISCORD_BOT_TOKEN")
     async with aiohttp.ClientSession(
-        headers={"Authorization": f"Bot {bot_token}"}
+        timeout=_TIMEOUT, headers={"Authorization": f"Bot {bot_token}"}
     ) as session:
         async with session.get(
             f"https://discord.com/api/v10/guilds/{guild_id}/channels"
@@ -126,9 +127,7 @@ async def create_invite(guild_id: str) -> str:
 
 async def get_user_info(token: str) -> str:
     async with aiohttp.ClientSession(
-        headers={
-            "Authorization": f"Bearer {token}",
-        }
+        timeout=_TIMEOUT, headers={"Authorization": f"Bearer {token}"}
     ) as session:
         async with session.get("https://discord.com/api/v10/users/@me") as resp:
             res = await resp.json()

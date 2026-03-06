@@ -1131,6 +1131,9 @@ async def contact_page():
             if not name or not email or not message:
                 ui.notify("Please fill in all fields.", type="warning")
                 return
+            if len(name) > 200:
+                ui.notify("Name is too long (max 200 characters).", type="warning")
+                return
             if not sanitize.is_valid_email(email):
                 ui.notify("Please enter a valid email address.", type="warning")
                 return
