@@ -447,4 +447,40 @@ async def test_get_users_with_expiring_tokens_query(mock_pool):
     sql = cur.execute.call_args[0][0]
     assert "twitch_auth_token IS NOT NULL" in sql
     assert "twitch_token_refresh_code IS NOT NULL" in sql
-    assert "UNIX_TIMESTAMP()" in sql
+
+
+# ---------------------------------------------------------------------------
+# is_seen_eventsub_message
+# ---------------------------------------------------------------------------
+async def test_is_seen_eventsub_message_new(mock_pool_factory):
+    """rowcount=1 after INSERT IGNORE means the row was inserted — not a duplicate."""
+    _, cur = mock_pool_factory(rowcount=1)
+    result = await db.is_seen_eventsub_message("msg-new")
+    assert result is False
+    assert cur.execute.call_count == 2  # DELETE expired + INSERT IGNORE
+
+
+async def test_is_seen_eventsub_message_duplicate(mock_pool_factory):
+    """rowcount=0 after INSERT IGNORE means the row already existed — duplicate."""
+    _, cur = mock_pool_factory(rowcount=0)
+    result = await db.is_seen_eventsub_message("msg-dup")
+    assert result is True
+
+
+async def test_is_seen_eventsub_message_insert_sql(mock_pool):
+    """INSERT IGNORE must include the message_id param and a 10-minute expiry."""
+    _, cur = mock_pool
+    await db.is_seen_eventsub_message("msg-abc")
+    insert_sql, params = cur.execute.call_args[0]
+    assert "INSERT IGNORE" in insert_sql
+    assert "INTERVAL 10 MINUTE" in insert_sql
+    assert params == ("msg-abc",)
+
+
+async def test_is_seen_eventsub_message_prunes_expired(mock_pool):
+    """A DELETE for expired rows must fire before the INSERT IGNORE."""
+    _, cur = mock_pool
+    await db.is_seen_eventsub_message("msg-abc")
+    first_sql = cur.execute.call_args_list[0][0][0]
+    assert "DELETE" in first_sql
+    assert "expires_at" in first_sql

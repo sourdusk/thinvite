@@ -14,6 +14,14 @@ CREATE TABLE IF NOT EXISTS users (
     discord_auth_code VARCHAR(255)
 );
 
+-- Deduplicates Twitch EventSub webhook redeliveries.  Rows expire after
+-- 10 minutes (matching Twitch's redelivery window) and are pruned on insert.
+CREATE TABLE IF NOT EXISTS eventsub_messages (
+    message_id VARCHAR(255) PRIMARY KEY,
+    expires_at TIMESTAMP NOT NULL,
+    INDEX idx_expires (expires_at)
+);
+
 CREATE TABLE IF NOT EXISTS redemptions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     streamer_session_id VARCHAR(255) NOT NULL,

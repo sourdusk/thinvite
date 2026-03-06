@@ -363,6 +363,23 @@ async def clear_eventsub_subscription(sess_id: str) -> None:
             )
 
 
+async def is_seen_eventsub_message(message_id: str) -> bool:
+    """Return True if this EventSub message ID has already been processed.
+
+    Uses INSERT IGNORE to atomically record new IDs.  Expired records
+    (older than 10 minutes) are pruned on each call to keep the table small.
+    """
+    async with _acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM eventsub_messages WHERE expires_at < NOW()")
+            await cur.execute(
+                "INSERT IGNORE INTO eventsub_messages (message_id, expires_at) "
+                "VALUES (%s, DATE_ADD(NOW(), INTERVAL 10 MINUTE))",
+                (message_id,),
+            )
+            return cur.rowcount == 0
+
+
 async def rotate_session(old_id: str, new_id: str) -> None:
     """Rename a session row to a fresh token to mitigate session-fixation."""
     async with _acquire() as conn:
