@@ -2,6 +2,7 @@ services:
   python:
     build: .
     container_name: thinvite-web
+    restart: always
     ports:
       - 8083:8083
     depends_on:
@@ -30,15 +31,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-    networks:
-      - thinvite
-
-  db_admin:
-    image: ghcr.io/shyim/adminerevo:latest
-    container_name: thinvite-dbadmin
-    restart: always
-    ports:
-      - 8084:8080
     networks:
       - thinvite
 
