@@ -1,0 +1,180 @@
+/*
+ * Thinvite — Brand Design Tokens
+ * Single source of truth for all colors, typography, and spacing.
+ * Import this file before any other stylesheet.
+ *
+ * Font dependencies (add to <head>):
+ * https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&display=swap
+ */
+
+:root {
+
+  /* ── COLORS: Primitives ────────────────────────────────────────── */
+
+  --color-violet:      #7c5af0;  /* Primary brand purple            */
+  --color-violet-lt:   #9d7df5;  /* Lighter purple — labels/accents */
+  --color-cobalt:      #3d6ef5;  /* Secondary blue                  */
+  --color-teal:        #4ecdc4;  /* Accent — success/active states  */
+  --color-frost:       #f0eeff;  /* Near-white — primary text       */
+  --color-ink:         #0d0d14;  /* Deepest background              */
+  --color-surface:     #12121f;  /* Base surface layer              */
+  --color-surface-2:   #1c1c30;  /* Raised surface — cards, panels  */
+  --color-muted:       #7070a0;  /* Secondary/placeholder text      */
+  --color-body-text:   #b0afd0;  /* Long-form body copy             */
+  --color-card-text:   #8888aa;  /* Tertiary text inside cards      */
+
+  /* ── COLORS: Semantic ─────────────────────────────────────────── */
+
+  --color-bg:          var(--color-ink);
+  --color-text:        var(--color-frost);
+  --color-text-muted:  var(--color-muted);
+  --color-border:      rgba(255, 255, 255, 0.07);
+
+  /* ── COLORS: Gradients ────────────────────────────────────────── */
+
+  --grad-primary:      linear-gradient(135deg, #7c5af0 0%, #3d6ef5 100%);
+
+  /* ── COLORS: Alpha tints (for badges, overlays) ──────────────── */
+
+  --color-violet-tint-13: rgba(124, 90, 240, 0.13);
+  --color-violet-tint-25: rgba(124, 90, 240, 0.25);
+  --color-violet-tint-40: rgba(124, 90, 240, 0.40);
+  --color-teal-tint-10:   rgba(78, 205, 196, 0.10);
+  --color-teal-tint-25:   rgba(78, 205, 196, 0.25);
+
+
+  /* ── TYPOGRAPHY: Font families ───────────────────────────────── */
+
+  --font-display:   'Syne', sans-serif;    /* Headings, wordmark, numerals */
+  --font-body:      'DM Sans', sans-serif; /* All body copy and UI text    */
+
+  /* ── TYPOGRAPHY: Weights ──────────────────────────────────────── */
+
+  --fw-light:       300;
+  --fw-regular:     400;
+  --fw-medium:      500;
+  --fw-semibold:    600;
+  --fw-bold:        700;
+  --fw-extrabold:   800;
+
+  /* ── TYPOGRAPHY: Scale ────────────────────────────────────────── */
+
+  --fs-10:  10px;   /* Section labels                    */
+  --fs-11:  11px;   /* Labels / caps / meta              */
+  --fs-12:  12px;   /* Badges, chip names, small labels  */
+  --fs-13:  13px;   /* Small UI copy (card body, btn sm) */
+  --fs-14:  14px;   /* Buttons, tagline text             */
+  --fs-15:  15px;   /* Base body                         */
+  --fs-16:  16px;   /* Subheading                        */
+  --fs-22:  22px;   /* Wordmark — large lockup           */
+  --fs-24:  24px;   /* Heading                           */
+  --fs-30:  30px;   /* Cover wordmark                    */
+  --fs-40:  40px;   /* Display                           */
+
+  /* ── TYPOGRAPHY: Line heights ────────────────────────────────── */
+
+  --lh-tight:   1.1;
+  --lh-snug:    1.5;
+  --lh-base:    1.6;
+
+  /* ── TYPOGRAPHY: Letter spacing ──────────────────────────────── */
+
+  --ls-tightest: -0.5px;  /* Display, cover wordmark */
+  --ls-tight:    -0.3px;  /* Heading                 */
+  --ls-tight-sm: -0.2px;  /* Wordmark small          */
+  --ls-normal:    0px;
+  --ls-wide:      1px;    /* Icon-row labels         */
+  --ls-wider:     1.5px;  /* Logo card labels        */
+  --ls-widest-1:  2.5px;  /* Labels / caps           */
+  --ls-widest-2:  3px;    /* Section labels          */
+
+  /* ── TYPOGRAPHY: Composite type styles ───────────────────────── */
+  /*  These bundle the tokens above for common patterns.            */
+
+  --type-display-family:   var(--font-body);
+  --type-display-weight:   var(--fw-light);
+  --type-display-size:     var(--fs-40);
+  --type-display-lh:       var(--lh-tight);
+  --type-display-ls:       var(--ls-tightest);
+
+  --type-heading-family:   var(--font-display);
+  --type-heading-weight:   var(--fw-bold);
+  --type-heading-size:     var(--fs-24);
+  --type-heading-ls:       var(--ls-tight);
+
+  --type-subheading-family: var(--font-body);
+  --type-subheading-weight: var(--fw-medium);
+  --type-subheading-size:   var(--fs-16);
+
+  --type-body-family:      var(--font-body);
+  --type-body-weight:      var(--fw-regular);
+  --type-body-size:        var(--fs-15);
+  --type-body-lh:          var(--lh-base);
+
+  --type-label-family:     var(--font-body);
+  --type-label-weight:     var(--fw-medium);
+  --type-label-size:       var(--fs-11);
+  --type-label-ls:         var(--ls-widest-1);
+
+  --type-wordmark-family:  var(--font-display);
+  --type-wordmark-weight:  var(--fw-bold);
+  --type-wordmark-size:    var(--fs-30);
+  --type-wordmark-ls:      var(--ls-tightest);
+
+
+  /* ── SPACING ──────────────────────────────────────────────────── */
+  /*  4-point base grid.                                            */
+
+  --space-1:    4px;
+  --space-2:    8px;
+  --space-3:   12px;
+  --space-4:   16px;
+  --space-5:   20px;
+  --space-6:   24px;
+  --space-7:   28px;
+  --space-8:   32px;
+  --space-10:  40px;
+  --space-12:  48px;
+  --space-14:  56px;
+  --space-16:  64px;
+  --space-22:  88px;
+  --space-24:  96px;
+
+  /* ── SPACING: Semantic aliases ────────────────────────────────── */
+
+  --space-page-x:          var(--space-12);  /* Page horizontal padding  */
+  --space-page-y-top:      var(--space-16);  /* Page top padding         */
+  --space-page-y-bottom:   var(--space-24);  /* Page bottom padding      */
+  --space-section:         var(--space-16);  /* Between major sections   */
+  --space-card-pad:        22px;             /* Card internal padding    */
+  --space-card-pad-lg:     var(--space-8);   /* Logo card top padding    */
+  --space-btn-x:           var(--space-5);   /* Button horizontal pad    */
+  --space-btn-y:           10px;             /* Button vertical pad      */
+  --space-btn-sm-x:        var(--space-4);   /* Small button horiz pad   */
+  --space-btn-sm-y:        var(--space-2);   /* Small button vert pad    */
+  --space-badge-x:         var(--space-3);   /* Badge horizontal pad     */
+  --space-badge-y:         var(--space-1);   /* Badge vertical pad       */
+  --space-tagline-x:       18px;             /* Tagline item horiz pad   */
+  --space-tagline-y:       13px;             /* Tagline item vert pad    */
+
+
+  /* ── BORDER RADIUS ────────────────────────────────────────────── */
+
+  --radius-sm:    10px;   /* Buttons, tagline items         */
+  --radius-md:    12px;   /* Color chips                    */
+  --radius-lg:    14px;   /* Cards, icon row, logo cards    */
+  --radius-pill:  100px;  /* Badges                         */
+
+
+  /* ── SHADOWS ──────────────────────────────────────────────────── */
+
+  --shadow-btn-primary: 0 4px 18px rgba(124, 90, 240, 0.3);
+
+
+  /* ── BORDERS ──────────────────────────────────────────────────── */
+
+  --border-default:        1px solid var(--color-border);
+  --border-violet-subtle:  1px solid var(--color-violet-tint-25);
+  --border-violet-medium:  1px solid var(--color-violet-tint-40);
+
+}

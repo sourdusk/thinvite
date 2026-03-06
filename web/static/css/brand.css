@@ -1,0 +1,282 @@
+/* Thinvite — Brand Overrides & Utilities
+ * Copyright (C) 2026  sourk9
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Loaded after brand-tokens.css. Overrides Quasar defaults and
+ * defines reusable brand classes used by page functions.
+ */
+
+/* ── QUASAR THEME VARIABLES ─────────────────────────────────────── */
+/* Wire brand tokens into Quasar's CSS variable system so that
+ * NiceGUI props like color="primary" resolve to brand colours. */
+:root {
+  --q-primary:   #7c5af0;
+  --q-secondary: #3d6ef5;
+  --q-accent:    #4ecdc4;
+  --q-positive:  #4ecdc4;
+  --q-dark:      #1c1c30;
+  --q-dark-page: #0d0d14;
+}
+
+/* ── BODY BASE ──────────────────────────────────────────────────── */
+body {
+  font-family: var(--font-body);
+}
+
+.body--dark {
+  background: var(--color-ink);
+  color: var(--color-frost);
+}
+
+/* ── HEADER / FOOTER ────────────────────────────────────────────── */
+.q-header {
+  background: var(--color-surface-2) !important;
+  border-bottom: var(--border-default);
+  box-shadow: none !important;
+}
+
+.q-footer {
+  background: var(--color-surface) !important;
+  border-top: var(--border-default);
+}
+
+/* ── QUASAR TYPOGRAPHY ──────────────────────────────────────────── */
+/* Headings get Syne; body copy stays DM Sans via body rule above. */
+.text-h1, .text-h2, .text-h3, .text-h4, .text-h5, .text-h6 {
+  font-family: var(--font-display) !important;
+  letter-spacing: var(--ls-tight) !important;
+}
+
+/* ── QUASAR BUTTONS ─────────────────────────────────────────────── */
+.q-btn {
+  font-family: var(--font-body) !important;
+  border-radius: var(--radius-sm) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+/* Primary gradient button — apply with .classes('th-btn-primary') */
+.q-btn.th-btn-primary {
+  background: var(--grad-primary) !important;
+  color: white !important;
+  font-weight: var(--fw-semibold) !important;
+  font-size: var(--fs-14) !important;
+  box-shadow: var(--shadow-btn-primary) !important;
+  padding: var(--space-btn-y) var(--space-btn-x) !important;
+  border: none !important;
+}
+
+/* Secondary outline button — apply with .classes('th-btn-secondary') */
+.q-btn.th-btn-secondary {
+  background: transparent !important;
+  color: var(--color-frost) !important;
+  font-weight: var(--fw-medium) !important;
+  font-size: var(--fs-14) !important;
+  border: var(--border-violet-medium) !important;
+  padding: var(--space-btn-y) var(--space-btn-x) !important;
+  box-shadow: none !important;
+}
+
+/* ── QUASAR INPUTS ──────────────────────────────────────────────── */
+.body--dark .q-field__control {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.body--dark .q-field__label {
+  color: var(--color-muted);
+}
+
+.body--dark .q-field__native,
+.body--dark .q-field__input {
+  color: var(--color-frost);
+}
+
+.body--dark .q-field--outlined .q-field__control:before {
+  border-color: var(--color-border);
+}
+
+.body--dark .q-field--outlined:hover .q-field__control:before {
+  border-color: var(--color-violet-tint-40);
+}
+
+.body--dark .q-field--focused .q-field__control:after {
+  border-color: var(--color-violet) !important;
+}
+
+/* ── QUASAR TABLES ──────────────────────────────────────────────── */
+.body--dark .q-table th {
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-11);
+  letter-spacing: var(--ls-widest-1);
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.body--dark .q-table__card {
+  background: var(--color-surface-2);
+}
+
+/* ── QUASAR SELECT ──────────────────────────────────────────────── */
+.body--dark .q-menu {
+  background: var(--color-surface-2);
+  border: var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+/* ── QUASAR SEPARATOR ───────────────────────────────────────────── */
+.q-separator {
+  background: var(--color-border) !important;
+}
+
+/* ── QUASAR DIALOGS ─────────────────────────────────────────────── */
+.body--dark .q-dialog .q-card {
+  background: var(--color-surface-2);
+  border: var(--border-default);
+  border-radius: var(--radius-lg);
+}
+
+/* ── BRAND UTILITY CLASSES ──────────────────────────────────────── */
+
+/* Gradient text — for wordmark accent and display italic */
+.th-grad-text {
+  background: var(--grad-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── HERO SECTION ───────────────────────────────────────────────── */
+.th-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 80vh;
+  padding: var(--space-16) var(--space-12);
+  gap: var(--space-6);
+  max-width: 800px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.th-display {
+  font-family: var(--font-body);
+  font-weight: var(--fw-light);
+  font-size: var(--fs-40);
+  letter-spacing: var(--ls-tightest);
+  line-height: var(--lh-tight);
+  color: var(--color-frost);
+  margin: 0;
+}
+
+.th-display em {
+  font-style: italic;
+  font-weight: var(--fw-light);
+  background: var(--grad-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.th-heading {
+  font-family: var(--font-display);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-24);
+  letter-spacing: var(--ls-tight);
+  color: var(--color-frost);
+  margin: 0;
+}
+
+.th-body {
+  font-family: var(--font-body);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-15);
+  line-height: var(--lh-base);
+  color: var(--color-body-text);
+  max-width: 520px;
+  margin: 0;
+}
+
+.th-label {
+  font-family: var(--font-body);
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-11);
+  letter-spacing: var(--ls-widest-1);
+  text-transform: uppercase;
+  color: var(--color-violet-lt);
+  margin: 0;
+}
+
+/* ── CARD COMPONENT ─────────────────────────────────────────────── */
+.th-card {
+  background: var(--color-surface-2);
+  border: var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-12);
+  max-width: 480px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.th-card-title {
+  font-family: var(--font-display);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-24);
+  letter-spacing: var(--ls-tight);
+  color: var(--color-frost);
+  margin: 0 0 var(--space-3) 0;
+}
+
+.th-card-body {
+  font-family: var(--font-body);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-15);
+  line-height: var(--lh-base);
+  color: var(--color-body-text);
+  margin: 0 0 var(--space-6) 0;
+}
+
+/* ── HEADER WORDMARK ────────────────────────────────────────────── */
+.th-wordmark {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-decoration: none;
+  padding: var(--space-3) 0;
+}
+
+.th-wordmark-text {
+  font-family: var(--font-display);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-22);
+  letter-spacing: var(--ls-tight-sm);
+  color: var(--color-frost);
+  line-height: 1;
+}
+
+/* ── CTA ROW (home page) ────────────────────────────────────────── */
+.th-cta-row {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ── PAGE WRAPPER ───────────────────────────────────────────────── */
+/* Used by card pages to vertically centre the card */
+.th-page-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80vh;
+  padding: var(--space-12) var(--space-6);
+  box-sizing: border-box;
+  width: 100%;
+}
