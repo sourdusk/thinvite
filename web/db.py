@@ -310,13 +310,15 @@ async def add_manual_redemption(
             )
 
 
-async def get_redemptions_for_streamer(streamer_sess_id: str) -> list:
+async def get_redemptions_for_streamer(
+    streamer_sess_id: str, limit: int = 200
+) -> list:
     async with _acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
                 "SELECT * FROM redemptions WHERE streamer_session_id = %s "
-                "ORDER BY redeemed_at DESC",
-                (streamer_sess_id,),
+                "ORDER BY redeemed_at DESC LIMIT %s",
+                (streamer_sess_id, limit),
             )
             return list(await cur.fetchall())
 
