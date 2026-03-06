@@ -534,9 +534,11 @@ async def begin_page():
                 )
                 manual_input.value = ""
                 ui.notify(f"{viewer['login']} can now claim an invite at /redeem.", type="positive")
-                redemptions_table.rows = await _load_rows(_sess_id())
+                new_rows = await _load_rows(_sess_id())
+                redemptions_table.rows = new_rows
                 redemptions_table.update()
-                _refresh_stats(redemptions_table.rows)
+                _refresh_stats(new_rows)
+                load_more_btn.set_visibility(len(new_rows) == _page_limit)
 
             ui.button("Add", on_click=add_manual).props("color=primary")
 
@@ -565,8 +567,10 @@ async def begin_page():
                 return "Fulfilled"
             return "Pending"
 
+        _page_limit = 200
+
         async def _load_rows(sess_id):
-            records = await db.get_redemptions_for_streamer(sess_id)
+            records = await db.get_redemptions_for_streamer(sess_id, limit=_page_limit)
             rows = []
             for r in records:
                 rows.append({
@@ -614,9 +618,11 @@ async def begin_page():
                 async def _confirm_bulk_revoke():
                     bulk_revoke_dialog.close()
                     revoked = await db.revoke_all_pending_redemptions(_current_sess)
-                    redemptions_table.rows = await _load_rows(_current_sess)
+                    new_rows = await _load_rows(_current_sess)
+                    redemptions_table.rows = new_rows
                     redemptions_table.update()
-                    _refresh_stats(redemptions_table.rows)
+                    _refresh_stats(new_rows)
+                    load_more_btn.set_visibility(len(new_rows) == _page_limit)
                     ui.notify(
                         f"Revoked {len(revoked)} pending redemption(s).", type="positive"
                     )
@@ -660,18 +666,41 @@ async def begin_page():
             if not sanitize.is_positive_int(rid):
                 ui.notify("Invalid request.", type="negative")
                 return
-            await db.revoke_redemption(int(rid), _current_sess)
-            redemptions_table.rows = await _load_rows(_current_sess)
+            ok = await db.revoke_redemption(int(rid), _current_sess)
+            if not ok:
+                ui.notify("Could not revoke — already fulfilled or revoked.", type="warning")
+            new_rows = await _load_rows(_current_sess)
+            redemptions_table.rows = new_rows
             redemptions_table.update()
-            _refresh_stats(redemptions_table.rows)
+            _refresh_stats(new_rows)
+            load_more_btn.set_visibility(len(new_rows) == _page_limit)
 
         redemptions_table.on("revoke", handle_revoke)
 
+        # "Load more" — visible only when the table is at its current limit,
+        # indicating additional rows may exist in the DB.
+        async def _load_more():
+            nonlocal _page_limit
+            _page_limit += 200
+            new_rows = await _load_rows(_current_sess)
+            redemptions_table.rows = new_rows
+            redemptions_table.update()
+            _refresh_stats(new_rows)
+            load_more_btn.set_visibility(len(new_rows) == _page_limit)
+
+        with ui.row().classes("window-width row justify-center q-mt-sm"):
+            load_more_btn = ui.button(
+                "Load more", icon="expand_more", on_click=_load_more
+            ).props("flat size=sm")
+        load_more_btn.set_visibility(len(rows) == _page_limit)
+
         # Auto-refresh every 30 seconds
         async def _auto_refresh():
-            redemptions_table.rows = await _load_rows(_current_sess)
+            new_rows = await _load_rows(_current_sess)
+            redemptions_table.rows = new_rows
             redemptions_table.update()
-            _refresh_stats(redemptions_table.rows)
+            _refresh_stats(new_rows)
+            load_more_btn.set_visibility(len(new_rows) == _page_limit)
 
         ui.timer(30, _auto_refresh)
 

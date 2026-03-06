@@ -130,32 +130,32 @@ async def test_has_pending_redemption_filters_fulfilled(mock_pool):
 # ---------------------------------------------------------------------------
 # revoke_redemption (now returns invite_url and does SELECT + UPDATE)
 # ---------------------------------------------------------------------------
-async def test_revoke_redemption_updates(mock_pool_factory):
-    _, cur = mock_pool_factory(fetchone={"invite_url": None})
-    await db.revoke_redemption(7, "streamer_sess")
-    assert cur.execute.call_count == 2
-    update_sql, params = cur.execute.call_args_list[1][0]
-    assert "revoked_at" in update_sql
+async def test_revoke_redemption_updates(mock_pool):
+    _, cur = mock_pool
+    cur.rowcount = 1
+    result = await db.revoke_redemption(7, "streamer_sess")
+    cur.execute.assert_called_once()
+    sql, params = cur.execute.call_args[0]
+    assert "revoked_at" in sql
     assert params == (7, "streamer_sess")
+    assert result is True
 
 
-async def test_revoke_redemption_returns_invite_url(mock_pool_factory):
-    _, cur = mock_pool_factory(fetchone={"invite_url": "https://discord.gg/abc"})
-    result = await db.revoke_redemption(1, "streamer_sess")
-    assert result == "https://discord.gg/abc"
-
-
-async def test_revoke_redemption_no_row_returns_none(mock_pool_factory):
-    mock_pool_factory(fetchone=None)
+async def test_revoke_redemption_returns_false_when_not_found(mock_pool):
+    _, cur = mock_pool
+    cur.rowcount = 0
     result = await db.revoke_redemption(999, "other_sess")
-    assert result is None
+    assert result is False
 
 
-async def test_revoke_redemption_includes_ownership_check(mock_pool_factory):
-    _, cur = mock_pool_factory(fetchone={"invite_url": None})
+async def test_revoke_redemption_includes_ownership_check(mock_pool):
+    _, cur = mock_pool
+    cur.rowcount = 1
     await db.revoke_redemption(42, "owner_sess")
-    select_sql, _ = cur.execute.call_args_list[0][0]
-    assert "streamer_session_id" in select_sql
+    sql, _ = cur.execute.call_args[0]
+    assert "streamer_session_id" in sql
+    assert "revoked_at IS NULL" in sql
+    assert "fulfilled_at IS NULL" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -188,9 +188,20 @@ async def test_revoke_all_pending_empty_skips_update(mock_pool_factory):
 # ---------------------------------------------------------------------------
 async def test_get_redemptions_for_streamer(mock_pool_factory):
     rows = [{"id": 1}, {"id": 2}]
-    mock_pool_factory(fetchall=rows)
+    _, cur = mock_pool_factory(fetchall=rows)
     result = await db.get_redemptions_for_streamer("sess")
     assert len(result) == 2
+    sql, params = cur.execute.call_args[0]
+    assert "LIMIT" in sql.upper()
+    assert params[1] == 200  # default limit
+
+
+async def test_get_redemptions_for_streamer_custom_limit(mock_pool_factory):
+    """A custom limit value is forwarded to the SQL query."""
+    _, cur = mock_pool_factory(fetchall=[])
+    await db.get_redemptions_for_streamer("sess", limit=50)
+    _, params = cur.execute.call_args[0]
+    assert params[1] == 50
 
 
 # ---------------------------------------------------------------------------
@@ -411,3 +422,29 @@ async def test_expire_redemption_targets_correct_id(mock_pool):
     await db.expire_redemption(99)
     _, params = cur.execute.call_args[0]
     assert params[0] == 99
+
+
+# ---------------------------------------------------------------------------
+# get_users_with_expiring_tokens
+# ---------------------------------------------------------------------------
+async def test_get_users_with_expiring_tokens_returns_list(mock_pool_factory):
+    users = [{"session_id": "s1", "twitch_token_refresh_code": "r1"}]
+    mock_pool_factory(fetchall=users)
+    result = await db.get_users_with_expiring_tokens()
+    assert result == users
+
+
+async def test_get_users_with_expiring_tokens_empty(mock_pool_factory):
+    mock_pool_factory(fetchall=[])
+    result = await db.get_users_with_expiring_tokens()
+    assert result == []
+
+
+async def test_get_users_with_expiring_tokens_query(mock_pool):
+    """SQL must filter on token presence, refresh code presence, and expiry window."""
+    _, cur = mock_pool
+    await db.get_users_with_expiring_tokens()
+    sql = cur.execute.call_args[0][0]
+    assert "twitch_auth_token IS NOT NULL" in sql
+    assert "twitch_token_refresh_code IS NOT NULL" in sql
+    assert "UNIX_TIMESTAMP()" in sql
