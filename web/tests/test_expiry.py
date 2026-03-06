@@ -143,27 +143,16 @@ async def test_refresh_expiring_tokens_no_users():
     mock_refresh.assert_not_called()
 
 
-async def test_refresh_expiring_tokens_skips_active_listeners():
-    """Users with an active bot listener are skipped (twitchAPI handles their refresh)."""
-    users = [{"session_id": "s1", "twitch_token_refresh_code": "r1"}]
-    with patch("expiry.db.get_users_with_expiring_tokens", AsyncMock(return_value=users)):
-        with patch("expiry.bot.has_active_listener", return_value=True):
-            with patch("expiry.twitch_api.refresh_auth_token", AsyncMock()) as mock_refresh:
-                await expiry.refresh_expiring_tokens()
-    mock_refresh.assert_not_called()
-
-
-async def test_refresh_expiring_tokens_refreshes_inactive_users(mock_pool_factory):
-    """Users without an active listener get their tokens refreshed and DB updated."""
+async def test_refresh_expiring_tokens_refreshes_all_users(mock_pool_factory):
+    """All expiring users get their tokens refreshed and DB updated."""
     mock_pool_factory(rowcount=1)
     users = [{"session_id": "s1", "twitch_token_refresh_code": "r1"}]
     new_token = {"access_token": "newtok", "expires_in": 14400, "refresh_token": "newref"}
 
     with patch("expiry.db.get_users_with_expiring_tokens", AsyncMock(return_value=users)):
-        with patch("expiry.bot.has_active_listener", return_value=False):
-            with patch("expiry.twitch_api.refresh_auth_token", AsyncMock(return_value=new_token)):
-                with patch("expiry.db.update_twitch_auth_token", AsyncMock()) as mock_update:
-                    await expiry.refresh_expiring_tokens()
+        with patch("expiry.twitch_api.refresh_auth_token", AsyncMock(return_value=new_token)):
+            with patch("expiry.db.update_twitch_auth_token", AsyncMock()) as mock_update:
+                await expiry.refresh_expiring_tokens()
 
     mock_update.assert_called_once()
     call_args = mock_update.call_args[0]
@@ -182,11 +171,10 @@ async def test_refresh_expiring_tokens_handles_failed_refresh():
     refresh_results = [None, {"access_token": "tok2", "expires_in": 14400, "refresh_token": "ref2"}]
 
     with patch("expiry.db.get_users_with_expiring_tokens", AsyncMock(return_value=users)):
-        with patch("expiry.bot.has_active_listener", return_value=False):
-            with patch("expiry.twitch_api.refresh_auth_token",
-                       AsyncMock(side_effect=refresh_results)):
-                with patch("expiry.db.update_twitch_auth_token", AsyncMock()) as mock_update:
-                    await expiry.refresh_expiring_tokens()
+        with patch("expiry.twitch_api.refresh_auth_token",
+                   AsyncMock(side_effect=refresh_results)):
+            with patch("expiry.db.update_twitch_auth_token", AsyncMock()) as mock_update:
+                await expiry.refresh_expiring_tokens()
 
     # Only s2 should be updated (s1 refresh failed)
     assert mock_update.call_count == 1

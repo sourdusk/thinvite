@@ -1,158 +1,163 @@
-import asyncio
+"""EventSub webhook subscription management.
+
+Replaces the former twitchAPI-based WebSocket listener with a thin layer that
+creates, deletes, and recovers Twitch EventSub webhook subscriptions.
+
+Events are delivered to POST /eventsub/callback in main.py; no persistent
+connections are maintained here.  Token refresh is handled entirely by the
+expiry-loop scheduler (expiry.py).
+"""
 import logging
 import os
-
-import aiohttp
-from twitchAPI.twitch import Twitch
-from twitchAPI.eventsub.websocket import EventSubWebsocket
-from twitchAPI.type import AuthScope, MissingScopeException
 
 import db
 import twitch as twitch_api
 
 logger = logging.getLogger()
 
-_listeners: dict = {}  # session_id -> (twitch_client, eventsub)
-_needs_reauth: set = set()  # session_ids that failed due to missing scope
-
-SCOPES = [
-    AuthScope.CHANNEL_READ_REDEMPTIONS,
-    AuthScope.CHANNEL_MANAGE_REDEMPTIONS,
-    AuthScope.CHAT_READ,
-    AuthScope.CHAT_EDIT,
-    AuthScope.USER_WRITE_CHAT,
-]
-
-SITE_URL = "https://thinvite.sourk9.com"
+# In-memory set of session IDs with a confirmed active EventSub subscription.
+_subscriptions: set[str] = set()
 
 
-async def _send_chat_message(broadcaster_id: str, token: str, message: str) -> None:
-    async with aiohttp.ClientSession(headers={
-        "Authorization": f"Bearer {token}",
-        "Client-Id": os.getenv("THINVITE_TWITCH_ID"),
-        "Content-Type": "application/json",
-    }) as session:
-        resp = await session.post(
-            "https://api.twitch.tv/helix/chat/messages",
-            json={
-                "broadcaster_id": broadcaster_id,
-                "sender_id": broadcaster_id,
-                "message": message,
-            }
-        )
-        if resp.status != 200:
-            logger.error(f"Failed to send chat message: {resp.status} {await resp.text()}")
+async def subscribe(user_record: dict) -> bool:
+    """Create an EventSub webhook subscription for this user.
+
+    Requires the user record to have twitch_user_id AND discord_server_id set —
+    we only subscribe when the streamer has completed both OAuth flows.
+    Returns True if a subscription was successfully registered with Twitch.
+    """
+    sess_id = user_record.get("session_id")
+    broadcaster_id = user_record.get("twitch_user_id")
+    if not sess_id or not broadcaster_id or not user_record.get("discord_server_id"):
+        return False
+
+    app_token = await twitch_api.get_app_access_token()
+    if not app_token:
+        logger.error(f"Cannot subscribe for {sess_id}: failed to obtain app access token")
+        return False
+
+    callback_url = os.getenv("THINVITE_CALLBACK_URL", "").rstrip("/") + "/eventsub/callback"
+    secret = os.getenv("THINVITE_EVENTSUB_SECRET", "")
+
+    sub_id = await twitch_api.create_eventsub_subscription(
+        broadcaster_id, callback_url, secret, app_token
+    )
+    if not sub_id:
+        logger.error(f"Failed to create EventSub subscription for {sess_id}")
+        return False
+
+    await db.set_eventsub_subscription(sess_id, sub_id)
+    _subscriptions.add(sess_id)
+    logger.info(
+        f"EventSub subscription {sub_id} created for "
+        f"{user_record.get('twitch_user_name', sess_id)}"
+    )
+    return True
 
 
-async def _on_redemption(sess_id: str, event) -> None:
+async def unsubscribe(sess_id: str) -> None:
+    """Delete the EventSub subscription for this session, if one exists."""
+    _subscriptions.discard(sess_id)
+
     user = await db.get_user_by_session_id(sess_id)
     if user is None:
         return
-    redeem_id = user.get("twitch_redeem_id")
-    if redeem_id and event.event.reward.id != redeem_id:
+
+    sub_id = user.get("eventsub_subscription_id")
+    if not sub_id:
         return
 
-    redeemer = event.event.user_name
-    viewer_id = event.event.user_id
-    twitch_redemption_id = event.event.id
-    twitch_reward_id = event.event.reward.id
+    await db.clear_eventsub_subscription(sess_id)
 
-    broadcaster_id = user["twitch_user_id"]
-    token = user["twitch_auth_token"]
-
-    # Duplicate check — if the viewer already has a pending redemption, cancel
-    # this one immediately to refund their channel points.
-    if await db.has_pending_redemption(sess_id, viewer_id):
-        logger.info(
-            f"Duplicate redemption from {redeemer} for streamer {sess_id}, cancelling"
-        )
-        await twitch_api.cancel_redemption(
-            broadcaster_id, twitch_reward_id, twitch_redemption_id, token
+    app_token = await twitch_api.get_app_access_token()
+    if not app_token:
+        logger.warning(
+            f"Cannot delete subscription {sub_id} for {sess_id}: "
+            "failed to obtain app access token"
         )
         return
 
-    # Store the pending redemption so the viewer can claim it at /redeem.
-    await db.add_redemption(
-        sess_id, viewer_id, redeemer, twitch_redemption_id, twitch_reward_id
-    )
-
-    message = f"@{redeemer} Head to {SITE_URL}/redeem to claim your Discord invite! You have 24 hours before it expires."
-    await _send_chat_message(broadcaster_id, token, message)
-
-
-def has_active_listener(sess_id: str) -> bool:
-    """Return True if an EventSub listener is currently running for sess_id."""
-    return sess_id in _listeners
-
-
-async def start_listener(user_record: dict) -> None:
-    sess_id = user_record["session_id"]
-    await stop_listener(sess_id)
-
-    try:
-        twitch_client = await Twitch(
-            os.getenv("THINVITE_TWITCH_ID"),
-            os.getenv("THINVITE_TWITCH_SECRET"),
+    deleted = await twitch_api.delete_eventsub_subscription(sub_id, app_token)
+    if deleted:
+        logger.info(f"EventSub subscription {sub_id} deleted for {sess_id}")
+    else:
+        logger.warning(
+            f"Could not delete EventSub subscription {sub_id} for {sess_id} "
+            "(may have already been removed)"
         )
 
-        # When twitchAPI auto-refreshes the access token, write the new token
-        # back to the DB so that direct Helix API calls (outside the bot) also
-        # pick up the refreshed credentials.
-        async def _on_token_refresh(token: str, refresh_token: str) -> None:
-            logger.info(f"twitchAPI refreshed token for {sess_id}, updating DB")
-            import time as _time
-            await db.update_twitch_auth_token(
-                sess_id, token,
-                int(_time.time()) + 14400,  # Twitch tokens last ~4 hours
-                refresh_token,
-            )
 
-        twitch_client.user_auth_refresh_callback = _on_token_refresh
+async def handle_revocation(sess_id: str) -> None:
+    """Handle a Twitch-initiated revocation — update local state without calling DELETE.
 
-        await twitch_client.set_user_authentication(
-            user_record["twitch_auth_token"],
-            SCOPES,
-            user_record["twitch_token_refresh_code"],
-        )
-
-        eventsub = EventSubWebsocket(twitch_client)
-        # start() is synchronous and blocks until the WebSocket handshake completes,
-        # so run it in a thread to avoid blocking the async event loop.
-        await asyncio.to_thread(eventsub.start)
-
-        async def callback(event):
-            await _on_redemption(sess_id, event)
-
-        await eventsub.listen_channel_points_custom_reward_redemption_add(
-            user_record["twitch_user_id"], callback
-        )
-
-        _listeners[sess_id] = (twitch_client, eventsub)
-        _needs_reauth.discard(sess_id)
-        logger.info(f"Bot listener started for {user_record.get('twitch_user_name', sess_id)}")
-    except MissingScopeException:
-        logger.warning(f"Missing scope for {sess_id}, user must re-authenticate")
-        _needs_reauth.add(sess_id)
-    except Exception:
-        logger.exception(f"Failed to start bot listener for {sess_id}")
+    Called by the /eventsub/callback handler when Twitch sends a revocation
+    notification (e.g. the broadcaster revoked the app's permissions).
+    """
+    _subscriptions.discard(sess_id)
+    await db.clear_eventsub_subscription(sess_id)
 
 
-async def stop_listener(sess_id: str) -> None:
-    if sess_id not in _listeners:
-        return
-    twitch_client, eventsub = _listeners.pop(sess_id)
-    try:
-        await eventsub.stop()
-        await twitch_client.close()
-    except Exception:
-        logger.exception(f"Error stopping listener for {sess_id}")
+def has_active_subscription(sess_id: str) -> bool:
+    """Return True if a confirmed active EventSub subscription exists for sess_id."""
+    return sess_id in _subscriptions
 
 
-def needs_reauth(sess_id: str) -> bool:
-    return sess_id in _needs_reauth
+async def recover_subscriptions() -> None:
+    """Verify and restore EventSub subscriptions at application startup.
 
-
-async def start_all_listeners() -> None:
+    For every user with both Twitch and Discord connected:
+    - If a subscription_id is stored and still 'enabled' on Twitch → add to
+      the in-memory set (no action needed).
+    - If a stored subscription is stale/revoked, or no subscription is stored →
+      create a fresh one.
+    """
     users = await db.get_all_bot_users()
+    if not users:
+        return
+
+    app_token = await twitch_api.get_app_access_token()
+    if not app_token:
+        logger.error("Cannot recover subscriptions: failed to obtain app access token")
+        return
+
+    callback_url = os.getenv("THINVITE_CALLBACK_URL", "").rstrip("/") + "/eventsub/callback"
+    secret = os.getenv("THINVITE_EVENTSUB_SECRET", "")
+
     for user in users:
-        await start_listener(user)
+        sess_id = user["session_id"]
+        stored_sub_id = user.get("eventsub_subscription_id")
+
+        if stored_sub_id:
+            status = await twitch_api.get_eventsub_subscription_status(
+                stored_sub_id, app_token
+            )
+            if status == "enabled":
+                _subscriptions.add(sess_id)
+                logger.info(
+                    f"Recovered active subscription {stored_sub_id} for "
+                    f"{user.get('twitch_user_name', sess_id)}"
+                )
+                continue
+
+            # Stale or unknown — clear and re-register below.
+            logger.warning(
+                f"Subscription {stored_sub_id} for {sess_id} has status {status!r}; "
+                "re-registering"
+            )
+            await db.clear_eventsub_subscription(sess_id)
+
+        # Create a fresh subscription.
+        sub_id = await twitch_api.create_eventsub_subscription(
+            user["twitch_user_id"], callback_url, secret, app_token
+        )
+        if sub_id:
+            await db.set_eventsub_subscription(sess_id, sub_id)
+            _subscriptions.add(sess_id)
+            logger.info(
+                f"Created subscription {sub_id} for "
+                f"{user.get('twitch_user_name', sess_id)}"
+            )
+        else:
+            logger.error(
+                f"Failed to create EventSub subscription for {sess_id} during recovery"
+            )

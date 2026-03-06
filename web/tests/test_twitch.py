@@ -424,3 +424,137 @@ async def test_refresh_auth_token_failure_returns_none():
     with patch("aiohttp.ClientSession", return_value=sess):
         result = await twitch.refresh_auth_token("badref")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# get_app_access_token
+# ---------------------------------------------------------------------------
+async def test_get_app_access_token_success():
+    twitch._app_token = None
+    twitch._app_token_expiry = 0.0
+    payload = {"access_token": "apptoken123", "expires_in": 3600}
+    resp = make_aiohttp_response(payload)
+    sess = make_aiohttp_session(post_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.get_app_access_token()
+    assert result == "apptoken123"
+    assert twitch._app_token == "apptoken123"
+
+
+async def test_get_app_access_token_failure_returns_none():
+    twitch._app_token = None
+    twitch._app_token_expiry = 0.0
+    resp = make_aiohttp_response({"error": "invalid_client"})
+    sess = make_aiohttp_session(post_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.get_app_access_token()
+    assert result is None
+
+
+async def test_get_app_access_token_uses_cache():
+    import time
+    twitch._app_token = "cached"
+    twitch._app_token_expiry = time.time() + 3900  # well within expiry window
+    with patch("aiohttp.ClientSession") as mock_sess:
+        result = await twitch.get_app_access_token()
+    assert result == "cached"
+    mock_sess.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# create_eventsub_subscription
+# ---------------------------------------------------------------------------
+async def test_create_eventsub_subscription_success():
+    payload = {"data": [{"id": "sub999"}]}
+    resp = make_aiohttp_response(payload, status=202)
+    sess = make_aiohttp_session(post_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.create_eventsub_subscription(
+            "bid1", "https://cb.example.com/eventsub/callback", "secret", "apptoken"
+        )
+    assert result == "sub999"
+
+
+async def test_create_eventsub_subscription_failure_returns_none():
+    resp = make_aiohttp_response({"error": "Conflict"}, status=409)
+    resp.text = AsyncMock(return_value="Conflict")
+    sess = make_aiohttp_session(post_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.create_eventsub_subscription(
+            "bid1", "https://cb.example.com/eventsub/callback", "secret", "apptoken"
+        )
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# delete_eventsub_subscription
+# ---------------------------------------------------------------------------
+async def test_delete_eventsub_subscription_success():
+    resp = make_aiohttp_response({}, status=204)
+    sess = MagicMock()
+    sess.__aenter__ = AsyncMock(return_value=sess)
+    sess.__aexit__ = AsyncMock(return_value=False)
+    sess.delete = MagicMock(return_value=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.delete_eventsub_subscription("sub123", "apptoken")
+    assert result is True
+
+
+async def test_delete_eventsub_subscription_404_returns_false():
+    resp = make_aiohttp_response({}, status=404)
+    resp.text = AsyncMock(return_value="Not Found")
+    sess = MagicMock()
+    sess.__aenter__ = AsyncMock(return_value=sess)
+    sess.__aexit__ = AsyncMock(return_value=False)
+    sess.delete = MagicMock(return_value=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.delete_eventsub_subscription("sub123", "apptoken")
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# get_eventsub_subscription_status
+# ---------------------------------------------------------------------------
+async def test_get_eventsub_subscription_status_enabled():
+    payload = {"data": [{"id": "sub123", "status": "enabled"}]}
+    resp = make_aiohttp_response(payload, status=200)
+    sess = make_aiohttp_session(get_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.get_eventsub_subscription_status("sub123", "apptoken")
+    assert result == "enabled"
+
+
+async def test_get_eventsub_subscription_status_not_found_returns_none():
+    resp = make_aiohttp_response({"data": []}, status=200)
+    sess = make_aiohttp_session(get_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.get_eventsub_subscription_status("sub999", "apptoken")
+    assert result is None
+
+
+async def test_get_eventsub_subscription_status_error_returns_none():
+    resp = make_aiohttp_response({}, status=401)
+    sess = make_aiohttp_session(get_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.get_eventsub_subscription_status("sub123", "apptoken")
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# send_chat_message
+# ---------------------------------------------------------------------------
+async def test_send_chat_message_success():
+    resp = make_aiohttp_response({}, status=200)
+    sess = make_aiohttp_session(post_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.send_chat_message("b1", "b1", "Hello!", "token")
+    assert result is True
+
+
+async def test_send_chat_message_failure_returns_false():
+    resp = make_aiohttp_response({"error": "Forbidden"}, status=403)
+    resp.text = AsyncMock(return_value="Forbidden")
+    sess = make_aiohttp_session(post_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await twitch.send_chat_message("b1", "b1", "Hello!", "token")
+    assert result is False

@@ -14,7 +14,6 @@ import asyncio
 import logging
 import time
 
-import bot
 import db
 import twitch as twitch_api
 
@@ -74,11 +73,9 @@ async def expire_old_redemptions() -> None:
 async def refresh_expiring_tokens() -> None:
     """Refresh Twitch access tokens that expire within the next 30 minutes.
 
-    Users with an active EventSub bot listener are skipped here: twitchAPI
-    refreshes their token automatically and the bot's refresh callback writes
-    the new token back to the DB.  We only need to cover users whose listener
-    is not running (e.g. the bot failed to start, or the user only uses the
-    dashboard without an active stream session).
+    With the webhook-based EventSub transport, no persistent bot listeners
+    manage tokens automatically.  The scheduler is the sole refresh path for
+    all users, so every expiring token is handled here.
 
     All eligible refreshes are issued concurrently via asyncio.gather().
     """
@@ -88,12 +85,11 @@ async def refresh_expiring_tokens() -> None:
         logger.exception("Failed to fetch users with expiring Twitch tokens")
         return
 
-    # Skip users whose bot listener is already handling refresh.
-    pending = [u for u in users if not bot.has_active_listener(u["session_id"])]
-    if not pending:
+    if not users:
         return
 
-    logger.info(f"Refreshing Twitch tokens for {len(pending)} user(s)")
+    logger.info(f"Refreshing Twitch tokens for {len(users)} user(s)")
+    pending = users
 
     async def _refresh_one(user: dict) -> None:
         sess_id = user["session_id"]
@@ -133,7 +129,7 @@ async def start_expiry_loop() -> None:
     """Tick every 60 seconds; run each task when its interval has elapsed.
 
     Sleeps before the first tick so the application finishes starting up
-    (DB pool, bot listeners, etc.) before any task queries the DB.
+    (DB pool, EventSub subscriptions, etc.) before any task queries the DB.
     """
     last_run: dict[str, float] = {entry["name"]: 0.0 for entry in _SCHEDULE}
 

@@ -333,6 +333,36 @@ async def get_all_bot_users() -> list:
             return list(await cur.fetchall())
 
 
+async def get_user_by_twitch_id(twitch_user_id: str) -> dict:
+    """Return the user row matching the given Twitch broadcaster ID, or None."""
+    async with _acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT * FROM users WHERE twitch_user_id = %s", (twitch_user_id,)
+            )
+            return await cur.fetchone()
+
+
+async def set_eventsub_subscription(sess_id: str, sub_id: str) -> None:
+    """Store the Twitch EventSub subscription ID for a session."""
+    async with _acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET eventsub_subscription_id = %s WHERE session_id = %s",
+                (sub_id, sess_id),
+            )
+
+
+async def clear_eventsub_subscription(sess_id: str) -> None:
+    """Clear the stored EventSub subscription ID for a session."""
+    async with _acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET eventsub_subscription_id = NULL WHERE session_id = %s",
+                (sess_id,),
+            )
+
+
 async def rotate_session(old_id: str, new_id: str) -> None:
     """Rename a session row to a fresh token to mitigate session-fixation."""
     async with _acquire() as conn:

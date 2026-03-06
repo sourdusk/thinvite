@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     twitch_user_id VARCHAR(255),
     twitch_user_name VARCHAR(255),
     twitch_redeem_id VARCHAR(255),
+    eventsub_subscription_id VARCHAR(255),
     discord_user_id VARCHAR(255),
     discord_server_id VARCHAR(255),
     discord_auth_code VARCHAR(255)

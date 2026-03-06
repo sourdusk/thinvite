@@ -17,10 +17,163 @@ _TIMEOUT = aiohttp.ClientTimeout(total=10)
 
 # Scopes required for streamers.  The manage scope is needed to CANCEL or
 # FULFILL redemptions via the Helix API; read-only is not sufficient.
+# chat:read / chat:edit / channel:bot were only needed for the IRC-based bot
+# and are no longer required now that we use the Helix chat messages endpoint.
 _STREAMER_SCOPE = (
-    "channel:read:redemptions channel:manage:redemptions "
-    "channel:bot chat:read chat:edit user:write:chat"
+    "channel:read:redemptions channel:manage:redemptions user:write:chat"
 )
+
+# ---------------------------------------------------------------------------
+# App access token — Client Credentials flow (cached in memory)
+# ---------------------------------------------------------------------------
+_app_token: str | None = None
+_app_token_expiry: float = 0.0
+
+
+async def get_app_access_token() -> str | None:
+    """Return a valid app access token, refreshing it when near expiry."""
+    global _app_token, _app_token_expiry
+    if _app_token and time.time() < _app_token_expiry - 300:
+        return _app_token
+    async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+        async with session.post(
+            "https://id.twitch.tv/oauth2/token",
+            data={
+                "client_id": os.getenv("THINVITE_TWITCH_ID"),
+                "client_secret": os.getenv("THINVITE_TWITCH_SECRET"),
+                "grant_type": "client_credentials",
+            },
+        ) as resp:
+            res = await resp.json()
+            if "access_token" not in res:
+                logger.error(f"Failed to get app access token: {res}")
+                return None
+            _app_token = res["access_token"]
+            _app_token_expiry = time.time() + res.get("expires_in", 3600)
+            return _app_token
+
+
+# ---------------------------------------------------------------------------
+# EventSub subscription management
+# ---------------------------------------------------------------------------
+
+async def create_eventsub_subscription(
+    broadcaster_id: str,
+    callback_url: str,
+    secret: str,
+    app_token: str,
+) -> str | None:
+    """Create a channel-point redemption EventSub subscription.
+
+    Returns the subscription ID string on success, None on failure.
+    Twitch responds with 202 Accepted; the subscription becomes 'enabled'
+    once the challenge handshake with our callback URL completes.
+    """
+    async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
+        headers={
+            "client-id": os.getenv("THINVITE_TWITCH_ID"),
+            "Authorization": f"Bearer {app_token}",
+            "Content-Type": "application/json",
+        },
+    ) as session:
+        async with session.post(
+            "https://api.twitch.tv/helix/eventsub/subscriptions",
+            json={
+                "type": "channel.channel_points_custom_reward_redemption.add",
+                "version": "1",
+                "condition": {"broadcaster_user_id": broadcaster_id},
+                "transport": {
+                    "method": "webhook",
+                    "callback": callback_url,
+                    "secret": secret,
+                },
+            },
+        ) as resp:
+            if resp.status != 202:
+                logger.error(
+                    f"Failed to create EventSub subscription for {broadcaster_id}: "
+                    f"{resp.status} {await resp.text()}"
+                )
+                return None
+            res = await resp.json()
+            return res["data"][0]["id"]
+
+
+async def delete_eventsub_subscription(subscription_id: str, app_token: str) -> bool:
+    """Delete an EventSub subscription by ID. Returns True on 204 No Content."""
+    async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
+        headers={
+            "client-id": os.getenv("THINVITE_TWITCH_ID"),
+            "Authorization": f"Bearer {app_token}",
+        },
+    ) as session:
+        async with session.delete(
+            f"https://api.twitch.tv/helix/eventsub/subscriptions?id={subscription_id}",
+        ) as resp:
+            if resp.status not in (204, 404):
+                logger.error(
+                    f"Unexpected status deleting subscription {subscription_id}: {resp.status}"
+                )
+            return resp.status == 204
+
+
+async def get_eventsub_subscription_status(
+    subscription_id: str, app_token: str
+) -> str | None:
+    """Return the status string of an EventSub subscription, or None if not found."""
+    async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
+        headers={
+            "client-id": os.getenv("THINVITE_TWITCH_ID"),
+            "Authorization": f"Bearer {app_token}",
+        },
+    ) as session:
+        async with session.get(
+            f"https://api.twitch.tv/helix/eventsub/subscriptions?id={subscription_id}",
+        ) as resp:
+            if resp.status != 200:
+                return None
+            res = await resp.json()
+            data = res.get("data", [])
+            return data[0].get("status") if data else None
+
+
+# ---------------------------------------------------------------------------
+# Helix chat messages
+# ---------------------------------------------------------------------------
+
+async def send_chat_message(
+    broadcaster_id: str, sender_user_id: str, message: str, token: str
+) -> bool:
+    """Send a message to a channel via the Helix chat messages endpoint.
+
+    Requires the sender token to have the user:write:chat scope.
+    """
+    async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
+        headers={
+            "client-id": os.getenv("THINVITE_TWITCH_ID"),
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    ) as session:
+        async with session.post(
+            "https://api.twitch.tv/helix/chat/messages",
+            json={
+                "broadcaster_id": broadcaster_id,
+                "sender_id": sender_user_id,
+                "message": message,
+            },
+        ) as resp:
+            if resp.status != 200:
+                logger.error(
+                    f"Failed to send chat message to {broadcaster_id}: "
+                    f"{resp.status} {await resp.text()}"
+                )
+                return False
+            return True
 
 
 def generate_auth_code_link(state: str, force_verify: bool = False) -> str:

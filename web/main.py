@@ -1,4 +1,7 @@
 import asyncio
+import hashlib
+import hmac
+import json
 import os
 import pathlib
 import re
@@ -8,10 +11,12 @@ import logging
 import time
 import urllib.parse
 from collections import defaultdict
+from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 from nicegui import app, ui
 from fastapi import Request
+from fastapi import Response
 from fastapi.responses import PlainTextResponse, JSONResponse
 from starlette.datastructures import MutableHeaders
 
@@ -30,6 +35,11 @@ import sanitize
 logger = logging.getLogger()
 
 _SESSION_MAX_AGE_SECONDS = 30 * 24 * 3600  # 30 days
+
+# EventSub webhook secret and deduplication registry.
+_EVENTSUB_SECRET = os.getenv("THINVITE_EVENTSUB_SECRET", "")
+# Maps message_id → unix expiry timestamp (pruned on every inbound event).
+_seen_msg_ids: dict[str, float] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -337,25 +347,17 @@ async def begin_page():
     if twitch_user_exists and user_record:
         twitch_username = user_record.get("twitch_user_name", "")
         if not _is_beta_user(twitch_username):
-            await bot.stop_listener(_sess_id())
+            await bot.unsubscribe(_sess_id())
             await db.delete_user_and_all_records(_sess_id())
             app.storage.user.clear()
             app.storage.user["waitlist_twitch"] = twitch_username
             ui.navigate.to("/waitlist")
             return
 
-    if bot.needs_reauth(_sess_id()):
-        ui.notify(
-            "Please re-connect your Twitch account to enable chat replies.",
-            type="warning",
-            timeout=0,
-        )
-
     async def twitch_login():
         state = secrets.token_hex(32)
         app.storage.user["state"] = state
-        force = bot.needs_reauth(_sess_id())
-        ui.navigate.to(twitch.generate_auth_code_link(state, force_verify=force))
+        ui.navigate.to(twitch.generate_auth_code_link(state))
 
     header(show_logout=True)
     if not (twitch_user_exists and discord_connected):
@@ -380,7 +382,7 @@ async def begin_page():
                     ui.label("Connected").classes("text-m m-auto")
 
                 async def disconnect_twitch():
-                    await bot.stop_listener(_sess_id())
+                    await bot.unsubscribe(_sess_id())
                     await db.disconnect_twitch(_sess_id())
                     ui.navigate.to("/begin")
 
@@ -495,7 +497,7 @@ async def begin_page():
 
             if discord_connected:
                 async def disconnect_discord():
-                    await bot.stop_listener(_sess_id())
+                    await bot.unsubscribe(_sess_id())
                     await db.disconnect_discord(_sess_id())
                     ui.navigate.to("/begin")
 
@@ -721,7 +723,7 @@ async def begin_page():
 
                 async def _confirm_delete():
                     delete_dialog.close()
-                    await bot.stop_listener(_sess_id())
+                    await bot.unsubscribe(_sess_id())
                     await db.delete_user_and_all_records(_sess_id())
                     app.storage.user.clear()
                     ui.navigate.to("/")
@@ -778,18 +780,18 @@ async def twitch_page(request: Request):
     # Rotate the session after successful authentication to prevent fixation.
     old_id, new_id = await _rotate_session_id()
 
-    # Restart bot listener under the new session ID.
-    await bot.stop_listener(old_id)
+    # Resubscribe under the new session ID.
+    await bot.unsubscribe(old_id)
     user = await db.get_user_by_session_id(new_id)
     if user and user.get("discord_server_id"):
-        asyncio.create_task(bot.start_listener(user))
+        asyncio.create_task(bot.subscribe(user))
 
     # Beta gate — redirect non-allowlisted streamers to the waitlist and
     # delete everything written to the DB during this OAuth round-trip so
     # no data is retained for users who are not permitted.
     if user and not _is_beta_user(user.get("twitch_user_name", "")):
         twitch_username = user.get("twitch_user_name", "")
-        await bot.stop_listener(new_id)
+        await bot.unsubscribe(new_id)
         await db.delete_user_and_all_records(new_id)
         app.storage.user.clear()
         app.storage.user["waitlist_twitch"] = twitch_username
@@ -848,11 +850,11 @@ async def discord_page(request: Request):
     # Rotate the session after successful authentication to prevent fixation.
     old_id, new_id = await _rotate_session_id()
 
-    # Restart bot listener under the new session ID.
-    await bot.stop_listener(old_id)
+    # Resubscribe under the new session ID.
+    await bot.unsubscribe(old_id)
     user = await db.get_user_by_session_id(new_id)
-    if user:
-        asyncio.create_task(bot.start_listener(user))
+    if user and user.get("twitch_user_id"):
+        asyncio.create_task(bot.subscribe(user))
 
     ui.navigate.to("/begin")
     return
@@ -1410,6 +1412,137 @@ async def privacy_page():
 
 
 # ---------------------------------------------------------------------------
+# EventSub webhook — receives channel-point redemption events from Twitch
+# ---------------------------------------------------------------------------
+
+def _verify_eventsub_signature(
+    msg_id: str, msg_timestamp: str, msg_sig: str, raw_body: bytes
+) -> bool:
+    """Verify the Twitch-Eventsub-Message-Signature HMAC-SHA256 header."""
+    message = (msg_id + msg_timestamp).encode("utf-8") + raw_body
+    expected = "sha256=" + hmac.new(
+        _EVENTSUB_SECRET.encode("utf-8"), message, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, msg_sig)
+
+
+@app.post("/eventsub/callback")
+async def eventsub_callback(request: Request):
+    raw_body = await request.body()
+    h = dict(request.headers)
+
+    msg_id        = h.get("twitch-eventsub-message-id", "")
+    msg_timestamp = h.get("twitch-eventsub-message-timestamp", "")
+    msg_sig       = h.get("twitch-eventsub-message-signature", "")
+    msg_type      = h.get("twitch-eventsub-message-type", "")
+
+    # Reject messages older than 10 minutes (replay-attack prevention).
+    try:
+        ts = datetime.fromisoformat(msg_timestamp.replace("Z", "+00:00"))
+        if abs((datetime.now(timezone.utc) - ts).total_seconds()) > 600:
+            return Response(status_code=403)
+    except Exception:
+        return Response(status_code=400)
+
+    # Reject messages with an invalid HMAC signature.
+    if not _verify_eventsub_signature(msg_id, msg_timestamp, msg_sig, raw_body):
+        return Response(status_code=403)
+
+    # Deduplicate by message ID (Twitch may redeliver on network failure).
+    now = time.time()
+    expired = [k for k, v in _seen_msg_ids.items() if v < now]
+    for k in expired:
+        del _seen_msg_ids[k]
+    if msg_id in _seen_msg_ids:
+        return Response(status_code=204)
+    _seen_msg_ids[msg_id] = now + 600  # keep for 10 minutes
+
+    try:
+        payload = json.loads(raw_body)
+    except Exception:
+        return Response(status_code=400)
+
+    if msg_type == "webhook_callback_verification":
+        # Twitch is verifying our endpoint — respond with the challenge string.
+        return PlainTextResponse(payload.get("challenge", ""))
+
+    if msg_type == "notification":
+        asyncio.create_task(_handle_eventsub_event(payload))
+        return Response(status_code=204)
+
+    if msg_type == "revocation":
+        asyncio.create_task(_handle_eventsub_revocation(payload))
+        return Response(status_code=204)
+
+    return Response(status_code=204)
+
+
+async def _handle_eventsub_event(payload: dict) -> None:
+    """Process a channel-point redemption notification from Twitch."""
+    event = payload.get("event", {})
+    broadcaster_id = event.get("broadcaster_user_id")
+    if not broadcaster_id:
+        return
+
+    user = await db.get_user_by_twitch_id(broadcaster_id)
+    if user is None:
+        return
+
+    sess_id  = user["session_id"]
+    redeem_id = user.get("twitch_redeem_id")
+    if not redeem_id:
+        return
+
+    reward = event.get("reward", {})
+    if reward.get("id") != redeem_id:
+        return  # not the reward we're watching
+
+    redeemer             = event.get("user_name", "")
+    viewer_id            = event.get("user_id", "")
+    twitch_redemption_id = event.get("id", "")
+    twitch_reward_id     = reward.get("id", "")
+    broadcaster_user_id  = user["twitch_user_id"]
+    token                = user["twitch_auth_token"]
+
+    # Duplicate guard — cancel this redemption and refund points if the viewer
+    # already has a pending one.
+    if await db.has_pending_redemption(sess_id, viewer_id):
+        logger.info(
+            f"Duplicate redemption from {redeemer} for streamer {sess_id}; cancelling"
+        )
+        await twitch.cancel_redemption(
+            broadcaster_user_id, twitch_reward_id, twitch_redemption_id, token
+        )
+        return
+
+    await db.add_redemption(
+        sess_id, viewer_id, redeemer, twitch_redemption_id, twitch_reward_id
+    )
+
+    site_url = os.getenv("THINVITE_CALLBACK_URL", "https://thinvite.sourk9.com").rstrip("/")
+    message = (
+        f"@{redeemer} Head to {site_url}/redeem to claim your Discord invite! "
+        "You have 24 hours before it expires."
+    )
+    await twitch.send_chat_message(broadcaster_user_id, broadcaster_user_id, message, token)
+
+
+async def _handle_eventsub_revocation(payload: dict) -> None:
+    """Handle a Twitch-initiated subscription revocation."""
+    sub  = payload.get("subscription", {})
+    sub_id       = sub.get("id", "unknown")
+    broadcaster_id = sub.get("condition", {}).get("broadcaster_user_id")
+    if broadcaster_id:
+        user = await db.get_user_by_twitch_id(broadcaster_id)
+        if user:
+            await bot.handle_revocation(user["session_id"])
+    logger.warning(
+        f"EventSub subscription {sub_id} revoked by Twitch "
+        f"(reason: {sub.get('status', 'unknown')})"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Static files & lifecycle
 # ---------------------------------------------------------------------------
 app.add_static_files('/static', 'static')
@@ -1418,7 +1551,7 @@ app.add_static_files('/static', 'static')
 @app.on_startup
 async def startup():
     await db.init_pool()         # pool must be ready before any DB call
-    await bot.start_all_listeners()
+    await bot.recover_subscriptions()
     asyncio.create_task(expiry.start_expiry_loop())
 
 
