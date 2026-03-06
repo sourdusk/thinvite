@@ -252,3 +252,13 @@ async def get_all_bot_users() -> list:
                 "WHERE twitch_user_id IS NOT NULL AND discord_server_id IS NOT NULL"
             )
             return list(await cur.fetchall())
+
+
+async def rotate_session(old_id: str, new_id: str) -> None:
+    """Rename a session row to a fresh token to mitigate session-fixation."""
+    async with _pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET session_id = %s WHERE session_id = %s",
+                (new_id, old_id),
+            )

@@ -13,37 +13,59 @@ logger = logging.getLogger()
 load_dotenv()
 
 
+async def get_user_guilds(token: str) -> list:
+    """Return partial guild objects for all guilds the user belongs to."""
+    async with aiohttp.ClientSession(
+        headers={"Authorization": f"Bearer {token}"}
+    ) as session:
+        async with session.get("https://discord.com/api/v10/users/@me/guilds") as resp:
+            if resp.status != 200:
+                logger.error(f"Failed to fetch user guilds: {resp.status}")
+                return None
+            return await resp.json()
+
+
 async def update_info(sess_id: str, code: str, guild_id: str) -> (bool, str):
     if not sanitize.is_valid_snowflake(guild_id):
         return (False, "Invalid guild ID")
     token = await get_discord_token(code)
     if token is None:
         return (False, "Failed to get auth token")
+
+    # Verify the requesting user owns or manages the specified guild.
+    guilds = await get_user_guilds(token)
+    if guilds is None:
+        return (False, "Failed to verify guild membership")
+    _ADMINISTRATOR = 0x8
+    _MANAGE_GUILD  = 0x20
+    has_access = any(
+        g["id"] == guild_id and (
+            g.get("owner")
+            or int(str(g.get("permissions", 0))) & (_ADMINISTRATOR | _MANAGE_GUILD)
+        )
+        for g in guilds
+    )
+    if not has_access:
+        return (False, "You do not have permission to manage that Discord server")
+
     user_id = await get_user_info(token)
     if user_id is None:
         return (False, "Failed to get user info")
     async with db._pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
-            # Check to see if there's an existing discord server
-            await cur.execute(
-                "SELECT id FROM users WHERE discord_server_id = %s", (guild_id,)
-            )
-            res = await cur.fetchone()
-            if res is not None and res["id"] is not None:
-                await cur.execute(
-                    "UPDATE users SET session_id = %s WHERE discord_server_id = %s",
-                    (sess_id, guild_id),
-                )
+            # Only update the row that belongs to the current session.
+            # Never look up or overwrite rows by guild_id — that would allow
+            # a caller to pivot into another user's account by supplying a
+            # guild_id that is already stored against a different session_id.
             await cur.execute(
                 """
                 UPDATE users SET
-                session_id = %s,
                 discord_user_id = %s,
                 discord_server_id = %s,
                 discord_auth_code = %s
                 WHERE session_id = %s
                 """,
-                (sess_id, user_id, guild_id, code, sess_id),
+                (user_id, guild_id, code, sess_id),
             )
             if cur.rowcount != 1:
                 return (False, "Failed to update user info")

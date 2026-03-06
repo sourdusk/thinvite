@@ -1,48 +1,123 @@
 import asyncio
 import os
-import random
+import pathlib
+import re
+import secrets
+import uuid
 import logging
 import time
+import urllib.parse
 from collections import defaultdict
 
 from dotenv import load_dotenv
 from nicegui import app, ui
 from fastapi import Request
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
 
 
 load_dotenv()
 
 import bot
+import captcha
 import discorddb
+import mail
 import twitch
 import db
 import sanitize
 
 logger = logging.getLogger()
 
+_SESSION_MAX_AGE_SECONDS = 30 * 24 * 3600  # 30 days
+
 
 # ---------------------------------------------------------------------------
 # Security headers — applied to every response
 # ---------------------------------------------------------------------------
-class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "SAMEORIGIN"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-        if "text/html" in response.headers.get("content-type", ""):
-            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        return response
+class _SecurityHeadersMiddleware:
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["X-Content-Type-Options"] = "nosniff"
+                headers["X-Frame-Options"] = "SAMEORIGIN"
+                headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+                headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+                # Don't prevent caching of versioned static assets. NiceGUI's
+                # JS files (vue, quasar, etc.) must load from cache so Firefox
+                # serves them in order; parallel HTTP/2 fetches arrive out of
+                # order causing "window.Vue is undefined" in quasar.umd.prod.js.
+                path = scope.get("path", "")
+                is_static = (
+                    ("/_nicegui/" in path and "/static/" in path)
+                    or path.startswith("/static/")
+                )
+                if not is_static:
+                    headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+# ---------------------------------------------------------------------------
+# Session cookie security: Secure flag, 30-day Max-Age, server-side TTL
+# ---------------------------------------------------------------------------
+class _SessionSecurityMiddleware:
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Server-side 30-day TTL via raw Starlette session dict
+        session = scope.get("session")
+        if session is not None:
+            issued = session.get("_thinvite_issued")
+            now = time.time()
+            if issued is None:
+                session["_thinvite_issued"] = now
+            elif now - issued > _SESSION_MAX_AGE_SECONDS:
+                session.clear()
+                session["_thinvite_issued"] = now
+
+        async def send_with_session_headers(message):
+            if message["type"] == "http.response.start":
+                # Patch Set-Cookie headers: add Secure + Max-Age to session cookies
+                raw = list(message.get("headers", []))
+                new_raw = []
+                for name, value in raw:
+                    if name.lower() == b"set-cookie":
+                        val = value.decode("latin-1")
+                        cookie_name = val.split("=")[0].strip()
+                        if cookie_name in ("session", "id"):
+                            if "Secure" not in val:
+                                val += "; Secure"
+                            if "Max-Age" not in val:
+                                val += f"; Max-Age={_SESSION_MAX_AGE_SECONDS}"
+                            value = val.encode("latin-1")
+                    new_raw.append((name, value))
+                message = {**message, "headers": new_raw}
+            await send(message)
+
+        await self.app(scope, receive, send_with_session_headers)
 
 
 app.add_middleware(_SecurityHeadersMiddleware)
+app.add_middleware(_SessionSecurityMiddleware)
+
 
 # ---------------------------------------------------------------------------
-# Simple in-memory rate limiter for the viewer OAuth callback
+# In-memory rate limiter — shared across all API callback endpoints
 # ---------------------------------------------------------------------------
-_viewer_auth_hits: dict = defaultdict(list)
+_api_hits: dict = defaultdict(list)
 _RATE_WINDOW = 60   # seconds
 _RATE_MAX = 10      # max attempts per window per IP
 
@@ -50,20 +125,92 @@ _RATE_MAX = 10      # max attempts per window per IP
 def _is_rate_limited(request: Request) -> bool:
     ip = request.headers.get("X-Forwarded-For", request.client.host).split(",")[0].strip()
     now = time.monotonic()
-    hits = [t for t in _viewer_auth_hits[ip] if now - t < _RATE_WINDOW]
+    hits = [t for t in _api_hits[ip] if now - t < _RATE_WINDOW]
     hits.append(now)
-    _viewer_auth_hits[ip] = hits
+    _api_hits[ip] = hits
     return len(hits) > _RATE_MAX
+
+
+# ---------------------------------------------------------------------------
+# Application-level session helpers
+# ---------------------------------------------------------------------------
+def _sess_id() -> str:
+    """Return the effective application session ID.
+
+    After the first OAuth round-trip the session is rotated and the new token
+    is stored in app.storage.user["_sess"].  Before rotation the NiceGUI
+    browser ID is used as a fallback.
+    """
+    return app.storage.user.get("_sess") or app.storage.browser["id"]
+
+
+async def _rotate_session_id() -> tuple:
+    """Generate a fresh session token, migrate the DB row, return (old, new)."""
+    old_id = _sess_id()
+    new_id = str(uuid.uuid4())
+    await db.rotate_session(old_id, new_id)
+    app.storage.user["_sess"] = new_id
+    return old_id, new_id
+
+
+# ---------------------------------------------------------------------------
+# Beta-tester allowlist
+# ---------------------------------------------------------------------------
+_BETA_USERS_FILE = pathlib.Path(__file__).parent / "beta_users.txt"
+
+
+def _is_beta_user(username: str) -> bool:
+    """Return True if *username* is permitted during the current beta phase.
+
+    Re-reads the allowlist file on every call so changes take effect without
+    a restart.  An empty file or a missing file disables beta restrictions
+    (i.e. all users are allowed).
+    """
+    try:
+        lines = _BETA_USERS_FILE.read_text().splitlines()
+    except FileNotFoundError:
+        return True
+    beta_users = {
+        l.strip().lower() for l in lines if l.strip() and not l.startswith("#")
+    }
+    return not beta_users or username.lower() in beta_users
+
+
+# ---------------------------------------------------------------------------
+# Per-session form submission rate-limiter
+# ---------------------------------------------------------------------------
+_FORM_COOLDOWN_SECONDS = 60
+
+
+def _is_form_on_cooldown(key: str) -> bool:
+    """Return True if a form identified by *key* was submitted recently.
+
+    When the cooldown is *not* active the current timestamp is stored in the
+    session, so subsequent calls within the window return True.
+    """
+    store_key = f"_form_ts_{key}"
+    last = app.storage.user.get(store_key, 0)
+    now = time.time()
+    if now - last < _FORM_COOLDOWN_SECONDS:
+        return True
+    app.storage.user[store_key] = now
+    return False
 
 
 # ---------------------------------------------------------------------------
 # Shared UI chrome
 # ---------------------------------------------------------------------------
-def header():
+def header(show_logout: bool = False):
     with ui.header(elevated=True).style(
         "background-color: black"
-    ).classes("justify-begin"):
+    ).classes("items-center justify-between"):
         ui.label("Thinvite by SourK9 Designs")
+        if show_logout:
+            ui.button(
+                "Logout",
+                icon="logout",
+                on_click=lambda: ui.navigate.to("/logout"),
+            ).props("flat color=white size=sm").classes("ml-auto")
 
 
 def footer():
@@ -90,7 +237,9 @@ def footer():
 
         with ui.row().classes("w-full justify-between items-center q-px-md q-py-xs"):
             ui.label("Copyright SourK9 Designs, LLC 2026").classes("text-caption")
-            ui.link("Privacy Policy", "/privacy").classes("text-caption text-grey-6")
+            with ui.row().classes("gap-md"):
+                ui.link("Contact", "/contact").classes("text-caption text-grey-6")
+                ui.link("Privacy Policy", "/privacy").classes("text-caption text-grey-6")
 
 
 # ---------------------------------------------------------------------------
@@ -125,42 +274,52 @@ async def begin_page():
         ui.notify(app.storage.user["error"])
         app.storage.user["error"] = None
 
-    if bot.needs_reauth(app.storage.browser["id"]):
+    res = await db.ensure_db_user(_sess_id())
+    if not res:
+        app.storage.user["error"] = "Failed to create user"
+        ui.navigate.to("/begin")
+        return
+
+    # Fetch connection state before rendering — enables the beta gate and
+    # avoids a second DB round-trip later in the function.
+    twitch_user_exists, user_record = await asyncio.gather(
+        twitch.user_exists(_sess_id()),
+        db.get_user_by_session_id(_sess_id()),
+    )
+    discord_connected = (
+        user_record is not None and user_record.get("discord_user_id") is not None
+    )
+
+    # Beta gate — redirect non-allowlisted Twitch users to the waitlist and
+    # delete everything we stored about them so their data is not retained.
+    if twitch_user_exists and user_record:
+        twitch_username = user_record.get("twitch_user_name", "")
+        if not _is_beta_user(twitch_username):
+            await bot.stop_listener(_sess_id())
+            await db.delete_user_and_all_records(_sess_id())
+            app.storage.user.clear()
+            app.storage.user["waitlist_twitch"] = twitch_username
+            ui.navigate.to("/waitlist")
+            return
+
+    if bot.needs_reauth(_sess_id()):
         ui.notify(
             "Please re-connect your Twitch account to enable chat replies.",
             type="warning",
             timeout=0,
         )
 
-    res = await db.ensure_db_user(app.storage.browser["id"])
-    if not res:
-        app.storage.user["error"] = "Failed to create user"
-        ui.navigate.to("/begin")
-        return
-
     async def twitch_login():
-        if "state" not in app.storage.user:
-            state = "%030x" % random.randrange(16**64)  # nosec
-            app.storage.user["state"] = state
-        else:
-            state = app.storage.user["state"]
-        force = bot.needs_reauth(app.storage.browser["id"])
+        state = secrets.token_hex(32)
+        app.storage.user["state"] = state
+        force = bot.needs_reauth(_sess_id())
         ui.navigate.to(twitch.generate_auth_code_link(state, force_verify=force))
 
-    header()
+    header(show_logout=True)
     with ui.row().classes("window-width row justify-center items-center"):
         ui.label("Begin by logging in to both Twitch and Discord.").classes(
             "text-h3 text-center text-justify"
         )
-
-    # Run both DB lookups in parallel — avoids two sequential round-trips.
-    twitch_user_exists, user_record = await asyncio.gather(
-        twitch.user_exists(app.storage.browser["id"]),
-        db.get_user_by_session_id(app.storage.browser["id"]),
-    )
-    discord_connected = (
-        user_record is not None and user_record.get("discord_user_id") is not None
-    )
 
     # Row with buttons
     with ui.row().classes("window-width row justify-center items-start").style(
@@ -178,42 +337,48 @@ async def begin_page():
                     ui.label("Connected").classes("text-m m-auto")
 
                 async def disconnect_twitch():
-                    await bot.stop_listener(app.storage.browser["id"])
-                    await db.disconnect_twitch(app.storage.browser["id"])
+                    await bot.stop_listener(_sess_id())
+                    await db.disconnect_twitch(_sess_id())
                     ui.navigate.to("/begin")
 
                 ui.button(
                     "Disconnect Twitch", color="negative", on_click=disconnect_twitch
                 ).props("flat size=sm").classes("q-mt-sm")
 
-                redeems = await twitch.get_channel_redeems(app.storage.browser["id"])
+                redeems = await twitch.get_channel_redeems(_sess_id())
 
-                current_redeem = await twitch.get_set_redeem(app.storage.browser["id"])
-                if current_redeem is None and redeems:
-                    current_redeem = (
-                        next((id for id, title in redeems.items() if "discord" in title.lower()), None)
-                        or next((id for id, title in redeems.items() if "server" in title.lower()), None)
-                        or next(iter(redeems))
-                    )
-                    await twitch.update_twitch_redeem(app.storage.browser["id"], current_redeem)
-                ui.label("Select the channel point redeem").classes("text-body2 text-center")
-                ui.label("viewers must use to receive a Discord invite:").classes("text-body2 text-center")
-                sel = ui.select(redeems, value=current_redeem).classes("fit-width")
+                if redeems is None:
+                    ui.label(
+                        "Could not load channel point redeems — Twitch API timed out. "
+                        "Please refresh the page."
+                    ).classes("text-body2 text-center text-negative")
+                else:
+                    current_redeem = await twitch.get_set_redeem(_sess_id())
+                    if current_redeem is None and redeems:
+                        current_redeem = (
+                            next((id for id, title in redeems.items() if "discord" in title.lower()), None)
+                            or next((id for id, title in redeems.items() if "server" in title.lower()), None)
+                            or next(iter(redeems))
+                        )
+                        await twitch.update_twitch_redeem(_sess_id(), current_redeem)
+                    ui.label("Select the channel point redeem").classes("text-body2 text-center")
+                    ui.label("viewers must use to receive a Discord invite:").classes("text-body2 text-center")
+                    sel = ui.select(redeems, value=current_redeem).classes("fit-width")
 
-                async def update_redeem():
-                    if sel.value == current_redeem:
-                        ui.notify("That redeem is already selected.", type="info")
-                        return
-                    res = await twitch.update_twitch_redeem(
-                        app.storage.browser["id"], sel.value
-                    )
-                    if res:
-                        ui.notify("Redeem changed!")
-                    else:
-                        app.storage.user["error"] = "Failed to update redeem"
-                        ui.navigate.to("/begin")
+                    async def update_redeem():
+                        if sel.value == current_redeem:
+                            ui.notify("That redeem is already selected.", type="info")
+                            return
+                        res = await twitch.update_twitch_redeem(
+                            _sess_id(), sel.value
+                        )
+                        if res:
+                            ui.notify("Redeem changed!")
+                        else:
+                            app.storage.user["error"] = "Failed to update redeem"
+                            ui.navigate.to("/begin")
 
-                ui.button(color="#6441a5", text="Submit", on_click=update_redeem)
+                    ui.button(color="#6441a5", text="Submit", on_click=update_redeem)
         else:
             with ui.column().classes("items-center"):
                 with ui.button(color="#6441a5", on_click=twitch_login).style(
@@ -227,8 +392,14 @@ async def begin_page():
         # Column 2 (discord)
         async def discord_login():
             client_id = os.getenv("THINVITE_DISCORD_ID")
+            state = secrets.token_hex(32)
+            app.storage.user["discord_state"] = state
+            encoded_state = urllib.parse.quote(state)
             ui.navigate.to(
-                f"https://discord.com/oauth2/authorize?client_id={client_id}&permissions=1&response_type=code&redirect_uri=https%3A%2F%2Fthinvite.sourk9.com%2Fapi%2Fdiscord&integration_type=0&scope=identify+bot"
+                f"https://discord.com/oauth2/authorize?client_id={client_id}"
+                f"&permissions=1&response_type=code"
+                f"&redirect_uri=https%3A%2F%2Fthinvite.sourk9.com%2Fapi%2Fdiscord"
+                f"&integration_type=0&scope=identify+bot+guilds&state={encoded_state}"
             )
 
         with ui.column().classes("items-center"):
@@ -250,8 +421,8 @@ async def begin_page():
 
             if discord_connected:
                 async def disconnect_discord():
-                    await bot.stop_listener(app.storage.browser["id"])
-                    await db.disconnect_discord(app.storage.browser["id"])
+                    await bot.stop_listener(_sess_id())
+                    await db.disconnect_discord(_sess_id())
                     ui.navigate.to("/begin")
 
                 ui.button(
@@ -280,16 +451,16 @@ async def begin_page():
                         type="warning",
                     )
                     return
-                viewer = await twitch.lookup_user_by_name(app.storage.browser["id"], username)
+                viewer = await twitch.lookup_user_by_name(_sess_id(), username)
                 if viewer is None:
                     ui.notify(f"Twitch user '{username}' not found.", type="negative")
                     return
                 await db.add_manual_redemption(
-                    app.storage.browser["id"], viewer["id"], viewer["login"]
+                    _sess_id(), viewer["id"], viewer["login"]
                 )
                 manual_input.value = ""
                 ui.notify(f"{viewer['login']} can now claim an invite at /redeem.", type="positive")
-                redemptions_table.rows = await _load_rows(app.storage.browser["id"])
+                redemptions_table.rows = await _load_rows(_sess_id())
                 redemptions_table.update()
 
             ui.button("Add", on_click=add_manual).props("color=primary")
@@ -335,7 +506,7 @@ async def begin_page():
                 })
             return rows
 
-        rows = await _load_rows(app.storage.browser["id"])
+        rows = await _load_rows(_sess_id())
         redemptions_table = ui.table(columns=columns, rows=rows, row_key="id").classes(
             "window-width q-px-xl"
         )
@@ -360,8 +531,8 @@ async def begin_page():
             if not sanitize.is_positive_int(rid):
                 ui.notify("Invalid request.", type="negative")
                 return
-            await db.revoke_redemption(int(rid), app.storage.browser["id"])
-            redemptions_table.rows = await _load_rows(app.storage.browser["id"])
+            await db.revoke_redemption(int(rid), _sess_id())
+            redemptions_table.rows = await _load_rows(_sess_id())
             redemptions_table.update()
 
         redemptions_table.on("revoke", handle_revoke)
@@ -383,8 +554,9 @@ async def begin_page():
 
                 async def _confirm_delete():
                     delete_dialog.close()
-                    await bot.stop_listener(app.storage.browser["id"])
-                    await db.delete_user_and_all_records(app.storage.browser["id"])
+                    await bot.stop_listener(_sess_id())
+                    await db.delete_user_and_all_records(_sess_id())
+                    app.storage.user.clear()
                     ui.navigate.to("/")
 
                 ui.button("Delete everything", color="negative", on_click=_confirm_delete)
@@ -400,17 +572,23 @@ async def begin_page():
 
 @ui.page("/api/twitch/auth_code", dark=True)
 async def twitch_page(request: Request):
+    if _is_rate_limited(request):
+        app.storage.user["error"] = "Too many attempts. Please wait a minute and try again."
+        ui.navigate.to("/begin")
+        return
+
     with ui.row().classes("window-width row justify-center items-center"):
         ui.label("Hang tight while we gather some information...").classes(
             "text-h3 text-center text-justify"
         )
     with ui.row().classes("window-width row justify-center items-center"):
         ui.spinner(size="lg")
+
     # Check for errors, state mismatch, no code provided.
     if "error" in app.storage.user and app.storage.user["error"] is not None:
         ui.navigate.to("/begin")
         return
-    if app.storage.user.get("state") is None or request.query_params["state"] != app.storage.user["state"]:
+    if app.storage.user.get("state") is None or request.query_params.get("state") != app.storage.user.get("state"):
         app.storage.user["error"] = "Invalid state"
         ui.navigate.to("/begin")
         return
@@ -419,19 +597,37 @@ async def twitch_page(request: Request):
         ui.navigate.to("/begin")
         return
 
+    # Consume the state token (one-time use)
+    app.storage.user.pop("state", None)
+
     code = request.query_params["code"]
 
-    res, err_msg = await twitch.init_login(app.storage.browser["id"], code)
+    res, err_msg = await twitch.init_login(_sess_id(), code)
     if not res:
         app.storage.user["error"] = err_msg
         ui.navigate.to("/begin")
         return
 
-    # Try to start bot listener now that the user has (re-)authenticated with Twitch.
-    # Fire as a background task so the WebSocket handshake doesn't block the page response.
-    user = await db.get_user_by_session_id(app.storage.browser["id"])
+    # Rotate the session after successful authentication to prevent fixation.
+    old_id, new_id = await _rotate_session_id()
+
+    # Restart bot listener under the new session ID.
+    await bot.stop_listener(old_id)
+    user = await db.get_user_by_session_id(new_id)
     if user and user.get("discord_server_id"):
         asyncio.create_task(bot.start_listener(user))
+
+    # Beta gate — redirect non-allowlisted streamers to the waitlist and
+    # delete everything written to the DB during this OAuth round-trip so
+    # no data is retained for users who are not permitted.
+    if user and not _is_beta_user(user.get("twitch_user_name", "")):
+        twitch_username = user.get("twitch_user_name", "")
+        await bot.stop_listener(new_id)
+        await db.delete_user_and_all_records(new_id)
+        app.storage.user.clear()
+        app.storage.user["waitlist_twitch"] = twitch_username
+        ui.navigate.to("/waitlist")
+        return
 
     ui.navigate.to("/begin")
     return
@@ -439,12 +635,30 @@ async def twitch_page(request: Request):
 
 @ui.page("/api/discord", dark=True)
 async def discord_page(request: Request):
+    if _is_rate_limited(request):
+        app.storage.user["error"] = "Too many attempts. Please wait a minute and try again."
+        ui.navigate.to("/begin")
+        return
+
     with ui.row().classes("window-width row justify-center items-center"):
         ui.label("Hang tight while we gather some information...").classes(
             "text-h3 text-center text-justify"
         )
     with ui.row().classes("window-width row justify-center items-center"):
         ui.spinner(size="lg")
+
+    # CSRF state validation
+    if (
+        app.storage.user.get("discord_state") is None
+        or request.query_params.get("state") != app.storage.user.get("discord_state")
+    ):
+        app.storage.user["error"] = "Invalid state parameter."
+        ui.navigate.to("/begin")
+        return
+
+    # Consume the state token (one-time use)
+    app.storage.user.pop("discord_state", None)
+
     if "code" not in request.query_params:
         app.storage.user["error"] = "Discord did not provide an auth code."
         ui.navigate.to("/begin")
@@ -457,19 +671,31 @@ async def discord_page(request: Request):
     code = request.query_params["code"]
     guild_id = request.query_params["guild_id"]
     res, err_msg = await discorddb.update_info(
-        app.storage.browser["id"], code, guild_id
+        _sess_id(), code, guild_id
     )
     if not res:
         app.storage.user["error"] = err_msg
         ui.navigate.to("/begin")
         return
 
-    # Fire as a background task so the WebSocket handshake doesn't block the page response.
-    user = await db.get_user_by_session_id(app.storage.browser["id"])
+    # Rotate the session after successful authentication to prevent fixation.
+    old_id, new_id = await _rotate_session_id()
+
+    # Restart bot listener under the new session ID.
+    await bot.stop_listener(old_id)
+    user = await db.get_user_by_session_id(new_id)
     if user:
         asyncio.create_task(bot.start_listener(user))
+
     ui.navigate.to("/begin")
     return
+
+
+@ui.page("/logout", dark=True)
+async def logout_page():
+    """Invalidate the current session and return to the home page."""
+    app.storage.user.clear()
+    ui.navigate.to("/")
 
 
 @ui.page("/redeem", dark=True)
@@ -489,7 +715,7 @@ async def redeem_page():
         )
 
     async def twitch_viewer_login():
-        state = "%030x" % random.randrange(16**64)  # nosec
+        state = secrets.token_hex(32)
         app.storage.user["viewer_state"] = state
         ui.navigate.to(twitch.generate_viewer_auth_link(state))
 
@@ -522,6 +748,10 @@ async def viewer_auth_page(request: Request):
         app.storage.user["viewer_error"] = "Invalid state. Please try again."
         ui.navigate.to("/redeem")
         return
+
+    # Consume the state token immediately (one-time use, prevents replay)
+    app.storage.user.pop("viewer_state", None)
+
     if "code" not in request.query_params:
         app.storage.user["viewer_error"] = "Twitch did not provide an auth code."
         ui.navigate.to("/redeem")
@@ -562,6 +792,226 @@ async def viewer_auth_page(request: Request):
     await db.fulfill_redemption(redemption["id"], invite_url)
     ui.navigate.to(invite_url)
     return
+
+
+@ui.page("/contact", dark=True)
+async def contact_page():
+    _site_key = os.getenv("TURNSTILE_SITE_KEY", "")
+
+    # Inject Turnstile script + token-capture callbacks into the page <head>.
+    # data-execution="render" forces auto-execution on page load even for
+    # invisible widget types, so the token is ready before the user submits.
+    ui.add_head_html("""
+        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+                async defer></script>
+        <script>
+        window._turnstileToken = null;
+        function onTurnstileSuccess(t) { window._turnstileToken = t; }
+        function onTurnstileExpired()  { window._turnstileToken = null; }
+        </script>
+    """)
+
+    header()
+    with ui.column().classes("w-full items-center q-pa-xl").style(
+        "max-width: 600px; margin: auto"
+    ):
+        ui.label("Contact Us").classes("text-h3 q-mb-md")
+        ui.label("Have a question or feedback? Send us a message.").classes(
+            "text-body1 q-mb-xl"
+        )
+
+        name_input = (
+            ui.input("Your name", placeholder="Sourk9")
+            .props("outlined")
+            .classes("w-full")
+        )
+        email_input = (
+            ui.input("Your email", placeholder="you@example.com")
+            .props("outlined")
+            .classes("w-full")
+        )
+        message_input = (
+            ui.textarea("Message", placeholder="Tell us what's on your mind…")
+            .props("outlined")
+            .classes("w-full")
+        )
+
+        # Invisible Turnstile widget — renders with no visible UI.
+        if _site_key:
+            ui.html(
+                f'<div class="cf-turnstile"'
+                f' data-sitekey="{_site_key}"'
+                f' data-callback="onTurnstileSuccess"'
+                f' data-expired-callback="onTurnstileExpired"'
+                f' data-execution="render"'
+                f' data-size="invisible"></div>'
+            )
+
+        async def submit_contact():
+            name = name_input.value.strip()
+            email = email_input.value.strip()
+            message = message_input.value.strip()
+
+            if not name or not email or not message:
+                ui.notify("Please fill in all fields.", type="warning")
+                return
+            if not sanitize.is_valid_email(email):
+                ui.notify("Please enter a valid email address.", type="warning")
+                return
+            if len(message) > 2000:
+                ui.notify(
+                    "Message is too long (max 2000 characters).", type="warning"
+                )
+                return
+            if _is_form_on_cooldown("contact"):
+                ui.notify(
+                    "Please wait a moment before submitting again.", type="warning"
+                )
+                return
+
+            # Verify Turnstile before touching any external service.
+            if _site_key:
+                token = await ui.run_javascript(
+                    "return window._turnstileToken || ''"
+                )
+                if not await captcha.verify_turnstile(token):
+                    ui.notify(
+                        "Security check failed. Please try again.", type="warning"
+                    )
+                    await ui.run_javascript(
+                        "if (typeof turnstile !== 'undefined') turnstile.reset()"
+                    )
+                    return
+
+            ok = await mail.send_contact_email(name, email, message)
+            if ok:
+                name_input.value = ""
+                email_input.value = ""
+                message_input.value = ""
+                ui.notify("Message sent! We'll be in touch.", type="positive")
+            else:
+                ui.notify(
+                    "Failed to send your message. Please try again later.",
+                    type="negative",
+                )
+
+            # Reset Turnstile after each submission attempt so it can be
+            # used again (token is single-use).
+            if _site_key:
+                await ui.run_javascript(
+                    "if (typeof turnstile !== 'undefined') turnstile.reset()"
+                )
+
+        ui.button("Send message", on_click=submit_contact).props(
+            "color=primary"
+        ).classes("q-mt-md")
+
+    footer()
+
+
+@ui.page("/waitlist", dark=True)
+async def waitlist_page():
+    _site_key = os.getenv("TURNSTILE_SITE_KEY", "")
+
+    ui.add_head_html("""
+        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+                async defer></script>
+        <script>
+        window._turnstileToken = null;
+        function onTurnstileSuccess(t) { window._turnstileToken = t; }
+        function onTurnstileExpired()  { window._turnstileToken = null; }
+        </script>
+    """)
+
+    header()
+    with ui.column().classes("w-full items-center q-pa-xl").style(
+        "max-width: 600px; margin: auto"
+    ):
+        ui.label("Join the Waitlist").classes("text-h3 q-mb-md text-center")
+        ui.label(
+            "Thinvite is currently in private beta. Enter your email below and "
+            "we'll notify you when access opens up."
+        ).classes("text-body1 q-mb-xl text-center")
+
+        # Pre-fill Twitch username when the beta gate sent the user here.
+        prefill_twitch = app.storage.user.pop("waitlist_twitch", "") or ""
+
+        email_input = (
+            ui.input("Email address", placeholder="you@example.com")
+            .props("outlined")
+            .classes("w-full")
+        )
+        twitch_input = (
+            ui.input("Twitch username (optional)", value=prefill_twitch)
+            .props("outlined")
+            .classes("w-full")
+        )
+
+        if _site_key:
+            ui.html(
+                f'<div class="cf-turnstile"'
+                f' data-sitekey="{_site_key}"'
+                f' data-callback="onTurnstileSuccess"'
+                f' data-expired-callback="onTurnstileExpired"'
+                f' data-execution="render"'
+                f' data-size="invisible"></div>'
+            )
+
+        async def submit_waitlist():
+            email = email_input.value.strip()
+            twitch_username = twitch_input.value.strip()
+
+            if not email:
+                ui.notify("Please enter your email address.", type="warning")
+                return
+            if not sanitize.is_valid_email(email):
+                ui.notify("Please enter a valid email address.", type="warning")
+                return
+            if twitch_username and not sanitize.is_valid_twitch_username(twitch_username):
+                ui.notify("Invalid Twitch username.", type="warning")
+                return
+            if _is_form_on_cooldown("waitlist"):
+                ui.notify(
+                    "Please wait a moment before submitting again.", type="warning"
+                )
+                return
+
+            if _site_key:
+                token = await ui.run_javascript(
+                    "return window._turnstileToken || ''"
+                )
+                if not await captcha.verify_turnstile(token):
+                    ui.notify(
+                        "Security check failed. Please try again.", type="warning"
+                    )
+                    await ui.run_javascript(
+                        "if (typeof turnstile !== 'undefined') turnstile.reset()"
+                    )
+                    return
+
+            ok = await mail.add_to_waitlist(email, twitch_username)
+            if ok:
+                email_input.value = ""
+                twitch_input.value = ""
+                ui.notify(
+                    "You're on the list! We'll email you when beta access opens.",
+                    type="positive",
+                )
+            else:
+                ui.notify(
+                    "Failed to sign up. Please try again later.", type="negative"
+                )
+
+            if _site_key:
+                await ui.run_javascript(
+                    "if (typeof turnstile !== 'undefined') turnstile.reset()"
+                )
+
+        ui.button("Join waitlist", on_click=submit_waitlist).props(
+            "color=primary"
+        ).classes("q-mt-md")
+
+    footer()
 
 
 @ui.page("/privacy", dark=True)
@@ -710,10 +1160,59 @@ async def shutdown():
     await db.close_pool()
 
 
+# ---------------------------------------------------------------------------
+# Global <head> injections — applied to every page
+# ---------------------------------------------------------------------------
+def _roboto_font_display_css() -> str:
+    """Return a <style> block that overrides font-display for Roboto @font-face rules.
+
+    Reads NiceGUI's vendored fonts.css at startup, extracts every Roboto
+    @font-face block, and re-emits them with font-display:swap added.
+    The browser deduplicates @font-face rules by matching descriptors and
+    uses the last declaration, so this wins without modifying the venv file.
+
+    The relative url(fonts/...) references in fonts.css are rewritten to the
+    absolute /_nicegui/{version}/static/fonts/... path so they resolve correctly
+    when the rules are inlined into a page <style> block rather than loaded
+    as an external stylesheet.
+    """
+    import nicegui as _nicegui
+    fonts_css = pathlib.Path(_nicegui.__file__).parent / "static" / "fonts.css"
+    try:
+        text = fonts_css.read_text()
+    except FileNotFoundError:
+        return ""
+    blocks = re.findall(
+        r'@font-face\s*\{[^}]*font-family:\s*"Roboto"[^}]*\}',
+        text,
+        re.DOTALL,
+    )
+    if not blocks:
+        return ""
+    static_base = f"/_nicegui/{_nicegui.__version__}/static/"
+    patched = [
+        re.sub(r'url\(fonts/', f"url({static_base}fonts/", b).rstrip().rstrip("}")
+        + "\n  font-display: swap;\n}"
+        for b in blocks
+    ]
+    return "<style>\n" + "\n".join(patched) + "\n</style>"
+
+
+ui.add_head_html(
+    '<meta name="description" content="Thinvite links Twitch channel point redemptions'
+    " to single-use Discord server invites \u2014 reward your viewers instantly.\">",
+    shared=True,
+)
+
+_roboto_css = _roboto_font_display_css()
+if _roboto_css:
+    ui.add_head_html(_roboto_css, shared=True)
+
+
 ui.run(
     port=8083,
     storage_secret=os.getenv("NICEGUI_STORAGE_SECRET"),
     show=False,
     title="Thinvite",
-    forwarded_allow_ips="*",
+    forwarded_allow_ips="127.0.0.1",
 )

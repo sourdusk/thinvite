@@ -252,3 +252,38 @@ async def test_delete_user_and_all_records_deletes_user(mock_pool):
     await db.delete_user_and_all_records("sess")
     sqls = [call[0][0] for call in cur.execute.call_args_list]
     assert any("users" in sql for sql in sqls)
+
+
+# ---------------------------------------------------------------------------
+# rotate_session
+# ---------------------------------------------------------------------------
+async def test_rotate_session_issues_update(mock_pool):
+    """rotate_session must issue exactly one UPDATE touching session_id."""
+    _, cur = mock_pool
+    await db.rotate_session("old_sess", "new_sess")
+    cur.execute.assert_called_once()
+    sql, params = cur.execute.call_args[0]
+    assert "UPDATE users" in sql
+    assert "session_id" in sql
+
+
+async def test_rotate_session_param_order(mock_pool):
+    """new_id is the SET value; old_id is the WHERE predicate — never reversed.
+
+    If the two arguments were swapped the UPDATE would match no rows (old_id
+    would be used as the new value) or, worse, rename a different row to the
+    caller's old token.  This test pins the correct order.
+    """
+    _, cur = mock_pool
+    await db.rotate_session("old_id", "new_id")
+    _, params = cur.execute.call_args[0]
+    assert params[0] == "new_id", "first param (SET) must be the new token"
+    assert params[1] == "old_id", "second param (WHERE) must be the old token"
+
+
+async def test_rotate_session_does_not_use_select(mock_pool):
+    """rotate_session should be a single UPDATE — no SELECT before the write."""
+    _, cur = mock_pool
+    await db.rotate_session("old_id", "new_id")
+    for call in cur.execute.call_args_list:
+        assert "SELECT" not in call[0][0].upper()

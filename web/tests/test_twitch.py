@@ -160,6 +160,26 @@ async def test_init_login_bad_token():
     assert "auth token" in msg
 
 
+async def test_init_login_user_info_fails(mock_pool):
+    """Token exchange succeeds but get_user_info returns empty data → (False, …)."""
+    _, cur = mock_pool
+    cur.rowcount = 1
+
+    token_payload = {"access_token": "t", "expires_in": 3600, "refresh_token": "r"}
+    token_resp = make_aiohttp_response(token_payload)
+    user_resp = make_aiohttp_response({"data": []})  # empty → get_user_info returns None
+
+    sessions = iter([
+        make_aiohttp_session(post_resp=token_resp),
+        make_aiohttp_session(get_resp=user_resp),
+    ])
+    with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
+        ok, msg = await twitch.init_login("sess", "code")
+
+    assert ok is False
+    assert "user info" in msg.lower()
+
+
 # ---------------------------------------------------------------------------
 # twitch.update_twitch_redeem  (UUID validation + DB write)
 # ---------------------------------------------------------------------------

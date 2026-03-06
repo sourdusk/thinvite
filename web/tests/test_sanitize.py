@@ -4,6 +4,66 @@ import sanitize
 
 
 # ---------------------------------------------------------------------------
+# is_valid_email
+# ---------------------------------------------------------------------------
+class TestEmail:
+    def test_simple_email(self):
+        assert sanitize.is_valid_email("user@example.com") is True
+
+    def test_subdomain_email(self):
+        assert sanitize.is_valid_email("user@mail.example.co.uk") is True
+
+    def test_plus_tag(self):
+        assert sanitize.is_valid_email("user+tag@example.com") is True
+
+    def test_dot_in_local_part(self):
+        assert sanitize.is_valid_email("first.last@example.com") is True
+
+    def test_underscore_in_local_part(self):
+        assert sanitize.is_valid_email("first_last@example.com") is True
+
+    def test_exactly_254_chars(self):
+        # "@a.com" = 6 chars; local = 248 chars → total = 254
+        local = "a" * 248
+        assert sanitize.is_valid_email(f"{local}@a.com") is True
+
+    def test_255_chars_rejected(self):
+        # "@a.com" = 6 chars; local = 249 chars → total = 255
+        local = "a" * 249
+        assert sanitize.is_valid_email(f"{local}@a.com") is False
+
+    def test_empty_rejected(self):
+        assert sanitize.is_valid_email("") is False
+
+    def test_none_rejected(self):
+        assert sanitize.is_valid_email(None) is False
+
+    def test_missing_at_rejected(self):
+        assert sanitize.is_valid_email("userexample.com") is False
+
+    def test_no_local_part_rejected(self):
+        assert sanitize.is_valid_email("@example.com") is False
+
+    def test_missing_domain_rejected(self):
+        assert sanitize.is_valid_email("user@") is False
+
+    def test_single_char_tld_rejected(self):
+        assert sanitize.is_valid_email("user@example.c") is False
+
+    def test_missing_tld_rejected(self):
+        assert sanitize.is_valid_email("user@example") is False
+
+    def test_script_tag_rejected(self):
+        assert sanitize.is_valid_email("<script>@example.com") is False
+
+    def test_sql_injection_rejected(self):
+        assert sanitize.is_valid_email("'; DROP TABLE users; --@x.com") is False
+
+    def test_whitespace_rejected(self):
+        assert sanitize.is_valid_email("user @example.com") is False
+
+
+# ---------------------------------------------------------------------------
 # is_valid_twitch_username
 # ---------------------------------------------------------------------------
 class TestTwitchUsername:

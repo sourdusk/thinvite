@@ -15,6 +15,11 @@ def env_vars(monkeypatch):
     monkeypatch.setenv("THINVITE_DISCORD_SECRET", "test_discord_secret")
     monkeypatch.setenv("THINVITE_DISCORD_BOT_TOKEN", "test_bot_token")
     monkeypatch.setenv("THINVITE_DB_PASSWORD", "test_db_password")
+    monkeypatch.setenv("MAILJET_API_KEY", "test_mj_key")
+    monkeypatch.setenv("MAILJET_SECRET_KEY", "test_mj_secret")
+    monkeypatch.setenv("MAILJET_SENDER_EMAIL", "noreply@test.thinvite.com")
+    monkeypatch.setenv("TURNSTILE_SITE_KEY", "test_site_key")
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test_turnstile_secret")
 
 
 # ---------------------------------------------------------------------------

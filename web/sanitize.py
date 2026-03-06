@@ -25,6 +25,9 @@ _UUID_RE = re.compile(
 # Discord / Twitch snowflake IDs: 17–20 decimal digits.
 _SNOWFLAKE_RE = re.compile(r"^\d{17,20}$")
 
+# RFC-5321 practical email address (max 254 chars per spec).
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
 
 # ---------------------------------------------------------------------------
 # Public validators
@@ -57,3 +60,8 @@ def is_positive_int(value) -> bool:
         return int(value) > 0
     except (TypeError, ValueError):
         return False
+
+
+def is_valid_email(value: str) -> bool:
+    """Return True if *value* looks like a valid email address (≤ 254 chars)."""
+    return bool(value and len(value) <= 254 and _EMAIL_RE.match(value))

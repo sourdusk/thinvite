@@ -26,6 +26,26 @@ async def test_get_discord_token_failure_returns_none():
 
 
 # ---------------------------------------------------------------------------
+# get_user_guilds
+# ---------------------------------------------------------------------------
+async def test_get_user_guilds_success():
+    guilds_data = [{"id": "123456789012345678", "owner": True, "permissions": "0"}]
+    resp = make_aiohttp_response(guilds_data)
+    sess = make_aiohttp_session(get_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await discorddb.get_user_guilds("tok")
+    assert result == guilds_data
+
+
+async def test_get_user_guilds_non_200_returns_none():
+    resp = make_aiohttp_response({}, status=401)
+    sess = make_aiohttp_session(get_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        result = await discorddb.get_user_guilds("bad_tok")
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
 # get_user_info
 # ---------------------------------------------------------------------------
 async def test_get_user_info_success():
@@ -138,17 +158,18 @@ async def test_update_info_invalid_guild_id_rejected():
 
 
 async def test_update_info_success(mock_pool):
-    """Happy path: token exchange → user info → DB update all succeed."""
+    """Happy path: token exchange → guild ownership check → user info → DB update all succeed."""
     _, cur = mock_pool
-    cur.fetchone = AsyncMock(return_value=None)  # no pre-existing guild row
     cur.rowcount = 1
 
     token_resp = make_aiohttp_response({"access_token": "tok"})
+    guilds_resp = make_aiohttp_response([{"id": "123456789012345678", "owner": True, "permissions": "0"}])
     user_resp = make_aiohttp_response({"id": "uid123"})
 
     sessions = iter([
-        make_aiohttp_session(post_resp=token_resp),
-        make_aiohttp_session(get_resp=user_resp),
+        make_aiohttp_session(post_resp=token_resp),   # get_discord_token
+        make_aiohttp_session(get_resp=guilds_resp),   # get_user_guilds
+        make_aiohttp_session(get_resp=user_resp),     # get_user_info
     ])
     with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
         ok, msg = await discorddb.update_info("sess", "code", "123456789012345678")
@@ -160,20 +181,173 @@ async def test_update_info_success(mock_pool):
 async def test_update_info_db_update_fails(mock_pool):
     """rowcount != 1 after UPDATE → (False, …)."""
     _, cur = mock_pool
-    cur.fetchone = AsyncMock(return_value=None)
     cur.rowcount = 0
 
     token_resp = make_aiohttp_response({"access_token": "tok"})
+    guilds_resp = make_aiohttp_response([{"id": "123456789012345678", "owner": True, "permissions": "0"}])
     user_resp = make_aiohttp_response({"id": "uid123"})
 
     sessions = iter([
-        make_aiohttp_session(post_resp=token_resp),
-        make_aiohttp_session(get_resp=user_resp),
+        make_aiohttp_session(post_resp=token_resp),   # get_discord_token
+        make_aiohttp_session(get_resp=guilds_resp),   # get_user_guilds
+        make_aiohttp_session(get_resp=user_resp),     # get_user_info
     ])
     with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
         ok, msg = await discorddb.update_info("sess", "code", "123456789012345678")
 
     assert ok is False
+
+
+async def test_update_info_guild_not_owned_rejected():
+    """Attacker supplies a guild_id they don't own — must be rejected before any DB write."""
+    token_resp = make_aiohttp_response({"access_token": "tok"})
+    # Attacker owns a completely different guild, not the target
+    guilds_resp = make_aiohttp_response([{"id": "999999999999999999", "owner": True, "permissions": "0"}])
+
+    sessions = iter([
+        make_aiohttp_session(post_resp=token_resp),   # get_discord_token
+        make_aiohttp_session(get_resp=guilds_resp),   # get_user_guilds
+    ])
+    with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
+        ok, msg = await discorddb.update_info("sess", "code", "123456789012345678")
+
+    assert ok is False
+    assert "permission" in msg.lower()
+
+
+async def test_update_info_guilds_fetch_fails_rejected():
+    """If Discord's guild list endpoint is unavailable, registration fails closed."""
+    token_resp = make_aiohttp_response({"access_token": "tok"})
+    guilds_resp = make_aiohttp_response({}, status=500)
+
+    sessions = iter([
+        make_aiohttp_session(post_resp=token_resp),   # get_discord_token
+        make_aiohttp_session(get_resp=guilds_resp),   # get_user_guilds (fails)
+    ])
+    with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
+        ok, msg = await discorddb.update_info("sess", "code", "123456789012345678")
+
+    assert ok is False
+    assert "verify" in msg.lower()
+
+
+# ---------------------------------------------------------------------------
+# update_info — guild permission bit variants
+# ---------------------------------------------------------------------------
+async def test_update_info_manage_guild_permission_accepted(mock_pool):
+    """A non-owner with MANAGE_GUILD (0x20 = 32) must be allowed."""
+    _, cur = mock_pool
+    cur.rowcount = 1
+
+    token_resp = make_aiohttp_response({"access_token": "tok"})
+    guilds_resp = make_aiohttp_response([{
+        "id": "123456789012345678", "owner": False, "permissions": "32",  # MANAGE_GUILD
+    }])
+    user_resp = make_aiohttp_response({"id": "uid123"})
+
+    sessions = iter([
+        make_aiohttp_session(post_resp=token_resp),
+        make_aiohttp_session(get_resp=guilds_resp),
+        make_aiohttp_session(get_resp=user_resp),
+    ])
+    with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
+        ok, _ = await discorddb.update_info("sess", "code", "123456789012345678")
+
+    assert ok is True
+
+
+async def test_update_info_administrator_permission_accepted(mock_pool):
+    """A non-owner with ADMINISTRATOR (0x8 = 8) must be allowed."""
+    _, cur = mock_pool
+    cur.rowcount = 1
+
+    token_resp = make_aiohttp_response({"access_token": "tok"})
+    guilds_resp = make_aiohttp_response([{
+        "id": "123456789012345678", "owner": False, "permissions": "8",  # ADMINISTRATOR
+    }])
+    user_resp = make_aiohttp_response({"id": "uid123"})
+
+    sessions = iter([
+        make_aiohttp_session(post_resp=token_resp),
+        make_aiohttp_session(get_resp=guilds_resp),
+        make_aiohttp_session(get_resp=user_resp),
+    ])
+    with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
+        ok, _ = await discorddb.update_info("sess", "code", "123456789012345678")
+
+    assert ok is True
+
+
+async def test_update_info_member_no_permissions_rejected():
+    """A guild member with zero permissions must be rejected."""
+    token_resp = make_aiohttp_response({"access_token": "tok"})
+    guilds_resp = make_aiohttp_response([{
+        "id": "123456789012345678", "owner": False, "permissions": "0",
+    }])
+
+    sessions = iter([
+        make_aiohttp_session(post_resp=token_resp),
+        make_aiohttp_session(get_resp=guilds_resp),
+    ])
+    with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
+        ok, msg = await discorddb.update_info("sess", "code", "123456789012345678")
+
+    assert ok is False
+    assert "permission" in msg.lower()
+
+
+async def test_update_info_empty_guild_list_rejected():
+    """A token with no guilds must be rejected."""
+    token_resp = make_aiohttp_response({"access_token": "tok"})
+    guilds_resp = make_aiohttp_response([])  # empty list
+
+    sessions = iter([
+        make_aiohttp_session(post_resp=token_resp),
+        make_aiohttp_session(get_resp=guilds_resp),
+    ])
+    with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
+        ok, msg = await discorddb.update_info("sess", "code", "123456789012345678")
+
+    assert ok is False
+    assert "permission" in msg.lower()
+
+
+# ---------------------------------------------------------------------------
+# update_info — regression: no UPDATE by guild_id (account-hijack prevention)
+# ---------------------------------------------------------------------------
+async def test_update_info_only_updates_by_session_id(mock_pool):
+    """The DB write must target only the current session row, never by guild_id.
+
+    Regression test for the account-hijack vulnerability where a caller could
+    supply a victim's guild_id and have their session_id written into the
+    victim's row via 'UPDATE users SET session_id = ? WHERE discord_server_id = ?'.
+    """
+    _, cur = mock_pool
+    cur.rowcount = 1
+
+    guild_id = "123456789012345678"
+    token_resp = make_aiohttp_response({"access_token": "tok"})
+    guilds_resp = make_aiohttp_response([{"id": guild_id, "owner": True, "permissions": "0"}])
+    user_resp = make_aiohttp_response({"id": "uid123"})
+
+    sessions = iter([
+        make_aiohttp_session(post_resp=token_resp),
+        make_aiohttp_session(get_resp=guilds_resp),
+        make_aiohttp_session(get_resp=user_resp),
+    ])
+    with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
+        ok, _ = await discorddb.update_info("my_session", "code", guild_id)
+
+    assert ok is True
+    # Exactly one DB execute call — no extra UPDATE by guild_id
+    cur.execute.assert_called_once()
+    sql, params = cur.execute.call_args[0]
+    # The WHERE predicate must use the session_id value
+    assert params[-1] == "my_session", "WHERE clause must bind the session_id"
+    # The WHERE clause must not reference discord_server_id
+    where_part = sql.split("WHERE")[-1]
+    assert "discord_server_id" not in where_part, \
+        "WHERE clause must not contain discord_server_id (account-hijack vector)"
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,8 @@ logger = logging.getLogger()
 
 load_dotenv()
 
+_TIMEOUT = aiohttp.ClientTimeout(total=10)
+
 
 def generate_auth_code_link(state: str, force_verify: bool = False) -> str:
     params = [
@@ -28,7 +30,7 @@ def generate_auth_code_link(state: str, force_verify: bool = False) -> str:
 
 
 async def get_auth_token(code: str) -> dict:
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
         async with session.post(
             "https://id.twitch.tv/oauth2/token",
             data={
@@ -51,6 +53,7 @@ async def get_user_from_db(sess_id: str) -> dict:
 
 async def get_user_info(token: str) -> dict:
     async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
         headers={
             "client-id": os.getenv("THINVITE_TWITCH_ID"),
             "Authorization": f"Bearer {token}",
@@ -70,6 +73,7 @@ async def get_channel_redeems(sess_id: str) -> dict:
     id = user["twitch_user_id"]
     token = user["twitch_auth_token"]
     async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
         headers={
             "client-id": os.getenv("THINVITE_TWITCH_ID"),
             "Authorization": f"Bearer {token}",
@@ -164,7 +168,7 @@ def generate_viewer_auth_link(state: str) -> str:
 
 
 async def get_viewer_token(code: str) -> dict:
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
         async with session.post(
             "https://id.twitch.tv/oauth2/token",
             data={
@@ -182,7 +186,7 @@ async def get_viewer_token(code: str) -> dict:
 
 
 async def revoke_token(token: str) -> None:
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
         await session.post(
             "https://id.twitch.tv/oauth2/revoke",
             data={
@@ -200,6 +204,7 @@ async def lookup_user_by_name(sess_id: str, username: str) -> dict:
         return None
     token = user["twitch_auth_token"]
     async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
         headers={
             "client-id": os.getenv("THINVITE_TWITCH_ID"),
             "Authorization": f"Bearer {token}",
