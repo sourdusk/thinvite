@@ -108,6 +108,22 @@ async def create_eventsub_subscription(
                 },
             },
         ) as resp:
+            if resp.status == 409:
+                # Subscription already exists — look it up and return its ID.
+                existing = await _find_existing_subscription(
+                    broadcaster_id, app_token
+                )
+                if existing:
+                    logger.info(
+                        f"EventSub subscription already exists for {broadcaster_id}: "
+                        f"{existing}"
+                    )
+                    return existing
+                logger.error(
+                    f"EventSub 409 for {broadcaster_id} but could not find "
+                    "existing subscription"
+                )
+                return None
             if resp.status != 202:
                 logger.error(
                     f"Failed to create EventSub subscription for {broadcaster_id}: "
@@ -116,6 +132,36 @@ async def create_eventsub_subscription(
                 return None
             res = await resp.json()
             return res["data"][0]["id"]
+
+
+async def _find_existing_subscription(
+    broadcaster_id: str, app_token: str
+) -> str | None:
+    """Find an existing channel-point redemption EventSub subscription for a broadcaster.
+
+    Queries the Twitch EventSub subscriptions list filtered by type and returns
+    the subscription ID if one matches the broadcaster, or None.
+    """
+    sub_type = "channel.channel_points_custom_reward_redemption.add"
+    async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
+        headers={
+            "client-id": os.getenv("THINVITE_TWITCH_ID"),
+            "Authorization": f"Bearer {app_token}",
+        },
+    ) as session:
+        async with session.get(
+            "https://api.twitch.tv/helix/eventsub/subscriptions",
+            params={"type": sub_type},
+        ) as resp:
+            if resp.status != 200:
+                return None
+            res = await resp.json()
+            for sub in res.get("data", []):
+                condition = sub.get("condition", {})
+                if condition.get("broadcaster_user_id") == broadcaster_id:
+                    return sub["id"]
+            return None
 
 
 async def delete_eventsub_subscription(subscription_id: str, app_token: str) -> bool:
