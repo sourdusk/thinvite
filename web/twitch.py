@@ -27,9 +27,9 @@ import sanitize
 
 logger = logging.getLogger()
 
-_SITE_URL = os.getenv("SITE_URL", "")
-
 load_dotenv()
+
+_SITE_URL = os.getenv("SITE_URL", "")
 
 _TIMEOUT = aiohttp.ClientTimeout(total=10)
 
