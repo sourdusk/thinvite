@@ -846,7 +846,7 @@ async def twitch_page(request: Request):
         return
 
     with ui.row().classes("window-width row justify-center items-center"):
-        ui.label("Hang tight while we gather some information...").classes(
+        ui.label("Connecting your account...").classes(
             "text-h3 text-center text-justify"
         )
     with ui.row().classes("window-width row justify-center items-center"):
@@ -909,7 +909,7 @@ async def discord_page(request: Request):
         return
 
     with ui.row().classes("window-width row justify-center items-center"):
-        ui.label("Hang tight while we gather some information...").classes(
+        ui.label("Connecting your account...").classes(
             "text-h3 text-center text-justify"
         )
     with ui.row().classes("window-width row justify-center items-center"):
@@ -1010,7 +1010,7 @@ async def viewer_auth_page(request: Request):
         return
 
     with ui.row().classes("window-width row justify-center items-center"):
-        ui.label("Hang tight while we gather some information...").classes(
+        ui.label("Connecting your account...").classes(
             "text-h3 text-center text-justify"
         )
     with ui.row().classes("window-width row justify-center items-center"):
