@@ -9,7 +9,6 @@ Thinvite is an open-source solution that securely invites users to your Discord 
 - **Automatic redemption management** — duplicates are refunded; fulfilled redeems are marked on Twitch
 - **EventSub webhooks** — real-time Twitch notifications without persistent connections
 - **Streamer dashboard** — view redemption stats, manage pending invites, bulk revoke
-- **Beta gate** — restrict access to an allowlist of Twitch usernames
 - **Captcha & rate limiting** — Cloudflare Turnstile and per-IP rate limiting on all API callbacks
 - **Contact form & waitlist** — Mailjet-powered email notifications
 - **Web-based UI** built with NiceGUI and Quasar
@@ -37,7 +36,7 @@ Thinvite is an open-source solution that securely invites users to your Discord 
    MARIADB_PASSWORD=your_db_password
    ```
 
-3. Create a `web/.env` file for the application (see `.env.example` for all options):
+3. Create a `web/.env` file for the application (see `web/.env.example` for all options):
    ```
    SITE_URL=https://thinvite.example.com
    THINVITE_DB_PASSWORD=your_db_password
@@ -98,10 +97,10 @@ docker exec -i thinvite-db mariadb -u thinvite -p"YOUR_DB_PASSWORD" thinvite < d
 docker exec -i thinvite-db mariadb -u thinvite -p"YOUR_DB_PASSWORD" thinvite < db/migrate_003.sql
 ```
 
-## Beta Gate
-
-To restrict access during beta, create a `web/beta_users.txt` file with one Twitch username per line. Lines starting with `#` are comments. Remove or empty the file to open access to everyone.
-
 ## License
 
 This program is free software: you can redistribute it and/or modify it under the terms of the [GNU Affero General Public License v3](LICENSE).
+
+## Acknowledgments
+
+Portions of this software were developed with the assistance of AI tools.
