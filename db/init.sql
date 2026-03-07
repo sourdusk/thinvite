@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS users (
     eventsub_subscription_id VARCHAR(255),
     discord_user_id VARCHAR(255),
     discord_server_id VARCHAR(255),
-    discord_auth_code VARCHAR(255)
+    discord_auth_code VARCHAR(255),
+    INDEX idx_twitch_user_id (twitch_user_id)
 );
 
 -- Deduplicates Twitch EventSub webhook redeliveries.  Rows expire after
@@ -52,5 +53,6 @@ CREATE TABLE IF NOT EXISTS redemptions (
     revoked_at TIMESTAMP NULL,
     INDEX idx_viewer (viewer_twitch_user_id),
     INDEX idx_fulfilled (fulfilled_at),
-    INDEX idx_streamer (streamer_session_id)
+    INDEX idx_streamer (streamer_session_id),
+    INDEX idx_twitch_redemption_id (twitch_redemption_id)
 );
