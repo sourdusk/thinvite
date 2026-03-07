@@ -295,7 +295,7 @@ async def get_channel_redeems(sess_id: str) -> list | None:
 async def update_twitch_info(
     sess_id: str, token_info: dict, user_info: dict, code: str
 ) -> bool:
-    async with db._pool.acquire() as conn:
+    async with db._acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -347,7 +347,7 @@ async def update_twitch_redeem(sess_id: str, redeem_id: str) -> bool:
     if not sanitize.is_valid_uuid(redeem_id):
         return False
 
-    async with db._pool.acquire() as conn:
+    async with db._acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "UPDATE users SET twitch_redeem_id = %s WHERE session_id = %s",
@@ -446,7 +446,7 @@ async def lookup_user_by_name(sess_id: str, username: str) -> dict:
 
 
 async def get_set_redeem(sess_id: str) -> str:
-    async with db._pool.acquire() as conn:
+    async with db._acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT twitch_redeem_id FROM users WHERE session_id = %s", (sess_id,)
