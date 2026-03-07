@@ -247,18 +247,15 @@ _FORM_COOLDOWN_SECONDS = 60
 
 
 def _is_form_on_cooldown(key: str) -> bool:
-    """Return True if a form identified by *key* was submitted recently.
-
-    When the cooldown is *not* active the current timestamp is stored in the
-    session, so subsequent calls within the window return True.
-    """
+    """Return True if a form identified by *key* was submitted recently."""
     store_key = f"_form_ts_{key}"
     last = app.storage.user.get(store_key, 0)
-    now = time.time()
-    if now - last < _FORM_COOLDOWN_SECONDS:
-        return True
-    app.storage.user[store_key] = now
-    return False
+    return time.time() - last < _FORM_COOLDOWN_SECONDS
+
+
+def _set_form_cooldown(key: str) -> None:
+    """Record a successful submission so the cooldown window begins now."""
+    app.storage.user[f"_form_ts_{key}"] = time.time()
 
 
 # ---------------------------------------------------------------------------
@@ -1275,6 +1272,7 @@ async def contact_page():
 
                 ok = await mail.send_contact_email(name, email, message)
                 if ok:
+                    _set_form_cooldown("contact")
                     name_input.value = ""
                     email_input.value = ""
                     message_input.value = ""
@@ -1384,6 +1382,7 @@ async def waitlist_page():
 
                 ok = await mail.add_to_waitlist(email, twitch_username)
                 if ok:
+                    _set_form_cooldown("waitlist")
                     email_input.value = ""
                     twitch_input.value = ""
                     ui.notify(
