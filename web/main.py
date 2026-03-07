@@ -938,6 +938,10 @@ async def discord_page(request: Request):
 
     code = request.query_params["code"]
     guild_id = request.query_params["guild_id"]
+    if not sanitize.is_valid_snowflake(guild_id):
+        app.storage.user["error"] = "Invalid guild id."
+        ui.navigate.to("/streamer")
+        return
     res, err_msg = await discorddb.update_info(
         _sess_id(), code, guild_id
     )
