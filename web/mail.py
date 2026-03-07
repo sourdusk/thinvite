@@ -15,16 +15,15 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Mailjet helpers for Thinvite.
+Brevo (formerly Sendinblue) helpers for Thinvite.
 
-Sending (v3.1 API)   — contact form and owner notifications.
-Contact lists (v3 REST API) — waitlist signups added to the "Thinvite" list.
+Transactional email (v3 SMTP API) — contact form and owner notifications.
+Contact lists (v3 Contacts API)   — waitlist signups added to the "Thinvite" list.
 
 Required environment variables (in web/.env):
-    MAILJET_API_KEY        Mailjet API key
-    MAILJET_SECRET_KEY     Mailjet Secret key
-    MAILJET_SENDER_EMAIL   A sender address verified in your Mailjet account
-                           (e.g. noreply@thinvite.sourk9.com or dusk@sourk9.com)
+    BREVO_API_KEY       Brevo API key
+    SENDER_ADDRESS      A sender address verified in your Brevo account
+                        (e.g. noreply@thinvite.sourk9.com)
 """
 import logging
 import os
@@ -36,14 +35,15 @@ load_dotenv()
 
 logger = logging.getLogger()
 
-_SEND_URL = "https://api.mailjet.com/v3.1/send"
-_REST_URL = "https://api.mailjet.com/v3/REST"
-_TIMEOUT  = aiohttp.ClientTimeout(total=10)
+_SEND_URL = "https://api.brevo.com/v3/smtp/email"
+_CONTACTS_URL = "https://api.brevo.com/v3/contacts"
+_LISTS_URL = "https://api.brevo.com/v3/contacts/lists"
+_TIMEOUT = aiohttp.ClientTimeout(total=10)
 
 _OWNER_EMAIL = "dusk@sourk9.com"
-_OWNER_NAME  = "SourK9"
+_OWNER_NAME = "SourK9"
 
-# In-process cache: contact list name → Mailjet list ID
+# In-process cache: contact list name → Brevo list ID
 _list_id_cache: dict = {}
 
 
@@ -51,27 +51,30 @@ _list_id_cache: dict = {}
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _auth() -> aiohttp.BasicAuth:
-    return aiohttp.BasicAuth(
-        os.getenv("MAILJET_API_KEY", ""),
-        os.getenv("MAILJET_SECRET_KEY", ""),
-    )
+def _headers() -> dict:
+    return {
+        "api-key": os.getenv("BREVO_API_KEY", ""),
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
 
 
 def _sender_email() -> str:
-    return os.getenv("MAILJET_SENDER_EMAIL", "noreply@thinvite.sourk9.com")
+    return os.getenv("SENDER_ADDRESS", "noreply@thinvite.sourk9.com")
 
 
 async def _send(payload: dict) -> bool:
-    """POST a v3.1 send payload; returns True on success."""
-    if not os.getenv("MAILJET_API_KEY") or not os.getenv("MAILJET_SECRET_KEY"):
-        logger.error("Mailjet credentials not configured — skipping send")
+    """POST a transactional email payload; returns True on success."""
+    if not os.getenv("BREVO_API_KEY"):
+        logger.error("Brevo API key not configured — skipping send")
         return False
     async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-        async with session.post(_SEND_URL, json=payload, auth=_auth()) as resp:
-            if resp.status != 200:
+        async with session.post(
+            _SEND_URL, json=payload, headers=_headers()
+        ) as resp:
+            if resp.status not in (200, 201):
                 logger.error(
-                    "Mailjet send failed: %s %s", resp.status, await resp.text()
+                    "Brevo send failed: %s %s", resp.status, await resp.text()
                 )
                 return False
             return True
@@ -79,48 +82,46 @@ async def _send(payload: dict) -> bool:
 
 async def _get_list_id(list_name: str) -> int | None:
     """
-    Look up a Mailjet contact list ID by name.
+    Look up a Brevo contact list ID by name.
     Result is cached in _list_id_cache for the lifetime of the process.
     """
     if list_name in _list_id_cache:
         return _list_id_cache[list_name]
     async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
         async with session.get(
-            f"{_REST_URL}/contactslist",
-            params={"Name": list_name},
-            auth=_auth(),
+            _LISTS_URL,
+            headers=_headers(),
         ) as resp:
             if resp.status != 200:
-                logger.error(
-                    "Mailjet contactslist lookup failed: %s", resp.status
-                )
+                logger.error("Brevo list lookup failed: %s", resp.status)
                 return None
             data = await resp.json()
-            if data.get("Count", 0) < 1:
-                logger.error("Mailjet contact list '%s' not found", list_name)
-                return None
-            list_id = data["Data"][0]["ID"]
-            _list_id_cache[list_name] = list_id
-            return list_id
+            for lst in data.get("lists", []):
+                if lst.get("name") == list_name:
+                    _list_id_cache[list_name] = lst["id"]
+                    return lst["id"]
+            logger.error("Brevo contact list '%s' not found", list_name)
+            return None
 
 
 async def _add_contact_to_list(email: str, list_name: str) -> bool:
     """
-    Add *email* to the named Mailjet contact list (addnoforce — no duplicate
-    sends to existing subscribers).
+    Add *email* to the named Brevo contact list.
+    Creates or updates the contact with the list assignment in one call.
     """
     list_id = await _get_list_id(list_name)
     if list_id is None:
         return False
     async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+        # Create or update the contact (updateEnabled avoids duplicates).
         async with session.post(
-            f"{_REST_URL}/contactslist/{list_id}/managemanycontacts",
-            json={"Action": "addnoforce", "Contacts": [{"Email": email}]},
-            auth=_auth(),
+            _CONTACTS_URL,
+            json={"email": email, "listIds": [list_id], "updateEnabled": True},
+            headers=_headers(),
         ) as resp:
-            if resp.status not in (200, 201):
+            if resp.status not in (200, 201, 204):
                 logger.error(
-                    "Mailjet add-contact failed: %s %s",
+                    "Brevo add-contact failed: %s %s",
                     resp.status,
                     await resp.text(),
                 )
@@ -137,29 +138,25 @@ async def send_contact_email(
 ) -> bool:
     """
     Forward a contact form submission to the site owner.
-    Sets Reply-To so the owner can reply directly to the sender.
+    Sets replyTo so the owner can reply directly to the sender.
     """
     payload = {
-        "Messages": [
-            {
-                "From":    {"Email": _sender_email(), "Name": "Thinvite"},
-                "To":      [{"Email": _OWNER_EMAIL, "Name": _OWNER_NAME}],
-                "ReplyTo": {"Email": from_email, "Name": from_name},
-                "Subject": f"[Thinvite Contact] Message from {from_name}",
-                "TextPart": (
-                    f"Name:  {from_name}\n"
-                    f"Email: {from_email}\n\n"
-                    f"{message}"
-                ),
-            }
-        ]
+        "sender": {"email": _sender_email(), "name": "Thinvite"},
+        "to": [{"email": _OWNER_EMAIL, "name": _OWNER_NAME}],
+        "replyTo": {"email": from_email, "name": from_name},
+        "subject": f"[Thinvite Contact] Message from {from_name}",
+        "textContent": (
+            f"Name:  {from_name}\n"
+            f"Email: {from_email}\n\n"
+            f"{message}"
+        ),
     }
     return await _send(payload)
 
 
 async def add_to_waitlist(email: str, twitch_username: str = "") -> bool:
     """
-    Add *email* to the "Thinvite" Mailjet contact list and send the owner a
+    Add *email* to the "Thinvite" Brevo contact list and send the owner a
     notification.  Returns True only when both operations succeed.
     """
     added = await _add_contact_to_list(email, "Thinvite")
@@ -169,14 +166,10 @@ async def add_to_waitlist(email: str, twitch_username: str = "") -> bool:
         body += f"\nTwitch: {twitch_username}"
 
     payload = {
-        "Messages": [
-            {
-                "From":    {"Email": _sender_email(), "Name": "Thinvite"},
-                "To":      [{"Email": _OWNER_EMAIL, "Name": _OWNER_NAME}],
-                "Subject": "[Thinvite] New Waitlist Signup",
-                "TextPart": body,
-            }
-        ]
+        "sender": {"email": _sender_email(), "name": "Thinvite"},
+        "to": [{"email": _OWNER_EMAIL, "name": _OWNER_NAME}],
+        "subject": "[Thinvite] New Waitlist Signup",
+        "textContent": body,
     }
     notified = await _send(payload)
     return added and notified

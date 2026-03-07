@@ -12,7 +12,7 @@ Thinvite is an open-source solution that securely invites users to your Discord 
 - **EventSub webhooks** — real-time Twitch notifications without persistent connections
 - **Streamer dashboard** — view redemption stats, manage pending invites, bulk revoke
 - **Captcha & rate limiting** — Cloudflare Turnstile and per-IP rate limiting on all API callbacks
-- **Contact form & waitlist** — Mailjet-powered email notifications
+- **Contact form & waitlist** — Brevo-powered email notifications
 - **Web-based UI** built with NiceGUI and Quasar
 
 ## Requirements
@@ -22,7 +22,7 @@ Thinvite is an open-source solution that securely invites users to your Discord 
 - A [Discord Application](https://discord.com/developers/applications) with a bot
 - A reverse proxy with HTTPS (e.g. Caddy, nginx)
 - A [Cloudflare Turnstile](https://dash.cloudflare.com) site (for captcha)
-- A [Mailjet](https://www.mailjet.com) account (for contact form and waitlist emails)
+- A [Brevo](https://www.brevo.com) account (for contact form and waitlist emails)
 
 ## Setup
 
@@ -49,9 +49,8 @@ Thinvite is an open-source solution that securely invites users to your Discord 
    THINVITE_DISCORD_BOT_TOKEN=your_discord_bot_token
    NICEGUI_STORAGE_SECRET=generate_with_secrets_token_hex_32
    THINVITE_EVENTSUB_SECRET=generate_with_secrets_token_hex_32
-   MAILJET_API_KEY=your_mailjet_api_key
-   MAILJET_SECRET_KEY=your_mailjet_secret_key
-   MAILJET_SENDER_EMAIL=noreply@example.com
+   BREVO_API_KEY=your_brevo_api_key
+   SENDER_ADDRESS=noreply@example.com
    TURNSTILE_SITE_KEY=your_turnstile_site_key
    TURNSTILE_SECRET_KEY=your_turnstile_secret_key
    ```

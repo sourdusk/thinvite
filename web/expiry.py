@@ -23,8 +23,9 @@ _SCHEDULE — no extra asyncio.create_task calls needed.
 
 Current schedule
 ----------------
-  expire_old_redemptions  — every  5 min  (24-hour pending redemption auto-cancel)
-  refresh_expiring_tokens — every 30 min  (Twitch token proactive refresh)
+  expire_old_redemptions   — every  5 min  (24-hour pending redemption auto-cancel)
+  refresh_expiring_tokens  — every 30 min  (Twitch token proactive refresh)
+  cleanup_stale_sessions   — every  6 hr   (prune orphaned/duplicate user rows)
 """
 import asyncio
 import logging
@@ -132,12 +133,33 @@ async def refresh_expiring_tokens() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Task: prune orphaned and duplicate user rows
+# ---------------------------------------------------------------------------
+
+async def cleanup_stale_sessions() -> None:
+    """Remove empty browser sessions and consolidate duplicate Twitch accounts.
+
+    Empty sessions accumulate when visitors hit the site without completing
+    OAuth.  Duplicate Twitch accounts are left behind by session rotation.
+    Both are harmless but waste space and cause redundant work during
+    EventSub subscription recovery.
+    """
+    try:
+        deleted = await db.cleanup_stale_sessions()
+        if deleted:
+            logger.info(f"Cleaned up {deleted} stale user row(s)")
+    except Exception:
+        logger.exception("Failed to clean up stale sessions")
+
+
+# ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
 
 _SCHEDULE = [
-    {"name": "expire_old_redemptions",  "interval": 5 * 60,  "fn": expire_old_redemptions},
-    {"name": "refresh_expiring_tokens", "interval": 30 * 60, "fn": refresh_expiring_tokens},
+    {"name": "expire_old_redemptions",   "interval": 5 * 60,      "fn": expire_old_redemptions},
+    {"name": "refresh_expiring_tokens",  "interval": 30 * 60,     "fn": refresh_expiring_tokens},
+    {"name": "cleanup_stale_sessions",   "interval": 6 * 60 * 60, "fn": cleanup_stale_sessions},
 ]
 
 

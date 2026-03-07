@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests for mail.py — Mailjet send and contact-list helpers."""
+"""Tests for mail.py — Brevo send and contact-list helpers."""
 import pytest
 from unittest.mock import patch
 
@@ -34,7 +34,7 @@ def clear_list_cache():
 # send_contact_email  (uses _send internally)
 # ---------------------------------------------------------------------------
 async def test_send_contact_email_success():
-    resp = make_aiohttp_response({}, status=200)
+    resp = make_aiohttp_response({}, status=201)
     sess = make_aiohttp_session(post_resp=resp)
     with patch("aiohttp.ClientSession", return_value=sess):
         result = await mail.send_contact_email("Alice", "alice@example.com", "Hi!")
@@ -50,51 +50,47 @@ async def test_send_contact_email_api_failure_returns_false():
 
 
 async def test_send_contact_email_missing_api_key_returns_false(monkeypatch):
-    monkeypatch.delenv("MAILJET_API_KEY", raising=False)
-    monkeypatch.delenv("MAILJET_SECRET_KEY", raising=False)
+    monkeypatch.delenv("BREVO_API_KEY", raising=False)
     result = await mail.send_contact_email("Alice", "alice@example.com", "Hi!")
     assert result is False
 
 
 async def test_send_contact_email_payload_to_is_owner():
     """Email must be addressed to the site owner, not the sender."""
-    resp = make_aiohttp_response({}, status=200)
+    resp = make_aiohttp_response({}, status=201)
     sess = make_aiohttp_session(post_resp=resp)
     with patch("aiohttp.ClientSession", return_value=sess):
         await mail.send_contact_email("Alice", "alice@example.com", "My message")
     payload = sess.post.call_args[1]["json"]
-    msg = payload["Messages"][0]
-    assert msg["To"][0]["Email"] == "dusk@sourk9.com"
+    assert payload["to"][0]["email"] == "dusk@sourk9.com"
 
 
 async def test_send_contact_email_reply_to_is_sender():
-    """Reply-To must be set to the sender so the owner can reply directly."""
-    resp = make_aiohttp_response({}, status=200)
+    """replyTo must be set to the sender so the owner can reply directly."""
+    resp = make_aiohttp_response({}, status=201)
     sess = make_aiohttp_session(post_resp=resp)
     with patch("aiohttp.ClientSession", return_value=sess):
         await mail.send_contact_email("Alice", "alice@example.com", "My message")
     payload = sess.post.call_args[1]["json"]
-    msg = payload["Messages"][0]
-    assert msg["ReplyTo"]["Email"] == "alice@example.com"
-    assert msg["ReplyTo"]["Name"] == "Alice"
+    assert payload["replyTo"]["email"] == "alice@example.com"
+    assert payload["replyTo"]["name"] == "Alice"
 
 
 async def test_send_contact_email_body_contains_message_and_name():
-    resp = make_aiohttp_response({}, status=200)
+    resp = make_aiohttp_response({}, status=201)
     sess = make_aiohttp_session(post_resp=resp)
     with patch("aiohttp.ClientSession", return_value=sess):
         await mail.send_contact_email("Bob", "bob@example.com", "Hello world")
     payload = sess.post.call_args[1]["json"]
-    msg = payload["Messages"][0]
-    assert "Hello world" in msg["TextPart"]
-    assert "Bob" in msg["Subject"]
+    assert "Hello world" in payload["textContent"]
+    assert "Bob" in payload["subject"]
 
 
 # ---------------------------------------------------------------------------
 # _get_list_id
 # ---------------------------------------------------------------------------
 async def test_get_list_id_success():
-    data = {"Count": 1, "Data": [{"ID": 42, "Name": "Thinvite"}]}
+    data = {"lists": [{"id": 42, "name": "Thinvite"}]}
     resp = make_aiohttp_response(data, status=200)
     sess = make_aiohttp_session(get_resp=resp)
     with patch("aiohttp.ClientSession", return_value=sess):
@@ -104,7 +100,7 @@ async def test_get_list_id_success():
 
 async def test_get_list_id_caches_result():
     """A second call must return the cached value without making another HTTP request."""
-    data = {"Count": 1, "Data": [{"ID": 99, "Name": "Thinvite"}]}
+    data = {"lists": [{"id": 99, "name": "Thinvite"}]}
     resp = make_aiohttp_response(data, status=200)
     sess = make_aiohttp_session(get_resp=resp)
     with patch("aiohttp.ClientSession", return_value=sess):
@@ -116,7 +112,7 @@ async def test_get_list_id_caches_result():
 
 
 async def test_get_list_id_not_found_returns_none():
-    data = {"Count": 0, "Data": []}
+    data = {"lists": []}
     resp = make_aiohttp_response(data, status=200)
     sess = make_aiohttp_session(get_resp=resp)
     with patch("aiohttp.ClientSession", return_value=sess):
@@ -136,9 +132,11 @@ async def test_get_list_id_api_error_returns_none():
 # _add_contact_to_list
 # ---------------------------------------------------------------------------
 async def test_add_contact_to_list_success():
-    # Session 1 (GET): look up list ID. Session 2 (POST): add contact.
-    list_resp = make_aiohttp_response({"Count": 1, "Data": [{"ID": 7}]}, status=200)
-    add_resp  = make_aiohttp_response({}, status=201)
+    # Session 1 (GET): look up list ID. Session 2 (POST): create contact.
+    list_resp = make_aiohttp_response(
+        {"lists": [{"id": 7, "name": "Thinvite"}]}, status=200
+    )
+    add_resp = make_aiohttp_response({}, status=201)
     sessions = iter([
         make_aiohttp_session(get_resp=list_resp),
         make_aiohttp_session(post_resp=add_resp),
@@ -149,7 +147,7 @@ async def test_add_contact_to_list_success():
 
 
 async def test_add_contact_to_list_list_not_found_returns_false():
-    list_resp = make_aiohttp_response({"Count": 0, "Data": []}, status=200)
+    list_resp = make_aiohttp_response({"lists": []}, status=200)
     sess = make_aiohttp_session(get_resp=list_resp)
     with patch("aiohttp.ClientSession", return_value=sess):
         result = await mail._add_contact_to_list("user@example.com", "NoSuchList")
@@ -166,26 +164,28 @@ async def test_add_contact_to_list_api_error_returns_false():
     assert result is False
 
 
-async def test_add_contact_to_list_uses_addnoforce_action():
-    """Action must be 'addnoforce' to avoid sending duplicate welcome emails."""
+async def test_add_contact_to_list_sends_update_enabled():
+    """updateEnabled must be True to avoid duplicates."""
     mail._list_id_cache["Thinvite"] = 5
-    add_resp = make_aiohttp_response({}, status=200)
+    add_resp = make_aiohttp_response({}, status=201)
     sess = make_aiohttp_session(post_resp=add_resp)
     with patch("aiohttp.ClientSession", return_value=sess):
         await mail._add_contact_to_list("user@example.com", "Thinvite")
     payload = sess.post.call_args[1]["json"]
-    assert payload["Action"] == "addnoforce"
-    assert payload["Contacts"][0]["Email"] == "user@example.com"
+    assert payload["updateEnabled"] is True
+    assert payload["email"] == "user@example.com"
+    assert 5 in payload["listIds"]
 
 
 # ---------------------------------------------------------------------------
 # add_to_waitlist
 # ---------------------------------------------------------------------------
 async def test_add_to_waitlist_success():
-    # Three sessions: GET list ID → POST add contact → POST owner notification.
-    list_resp   = make_aiohttp_response({"Count": 1, "Data": [{"ID": 3}]}, status=200)
-    add_resp    = make_aiohttp_response({}, status=201)
-    notify_resp = make_aiohttp_response({}, status=200)
+    list_resp = make_aiohttp_response(
+        {"lists": [{"id": 3, "name": "Thinvite"}]}, status=200
+    )
+    add_resp = make_aiohttp_response({}, status=201)
+    notify_resp = make_aiohttp_response({}, status=201)
     sessions = iter([
         make_aiohttp_session(get_resp=list_resp),
         make_aiohttp_session(post_resp=add_resp),
@@ -198,9 +198,8 @@ async def test_add_to_waitlist_success():
 
 async def test_add_to_waitlist_list_add_fails_returns_false():
     """If the contact list is not found the overall call returns False."""
-    # add_to_waitlist always sends the notification, even if the list add fails.
-    list_resp   = make_aiohttp_response({"Count": 0, "Data": []}, status=200)
-    notify_resp = make_aiohttp_response({}, status=200)
+    list_resp = make_aiohttp_response({"lists": []}, status=200)
+    notify_resp = make_aiohttp_response({}, status=201)
     sessions = iter([
         make_aiohttp_session(get_resp=list_resp),
         make_aiohttp_session(post_resp=notify_resp),
@@ -212,8 +211,10 @@ async def test_add_to_waitlist_list_add_fails_returns_false():
 
 async def test_add_to_waitlist_notification_fails_returns_false():
     """If the owner notification fails the overall call returns False."""
-    list_resp   = make_aiohttp_response({"Count": 1, "Data": [{"ID": 3}]}, status=200)
-    add_resp    = make_aiohttp_response({}, status=201)
+    list_resp = make_aiohttp_response(
+        {"lists": [{"id": 3, "name": "Thinvite"}]}, status=200
+    )
+    add_resp = make_aiohttp_response({}, status=201)
     notify_resp = make_aiohttp_response({}, status=500)
     sessions = iter([
         make_aiohttp_session(get_resp=list_resp),
@@ -227,9 +228,11 @@ async def test_add_to_waitlist_notification_fails_returns_false():
 
 async def test_add_to_waitlist_notification_includes_twitch_username():
     """Twitch username must appear in the owner notification body."""
-    list_resp   = make_aiohttp_response({"Count": 1, "Data": [{"ID": 3}]}, status=200)
-    add_resp    = make_aiohttp_response({}, status=201)
-    notify_resp = make_aiohttp_response({}, status=200)
+    list_resp = make_aiohttp_response(
+        {"lists": [{"id": 3, "name": "Thinvite"}]}, status=200
+    )
+    add_resp = make_aiohttp_response({}, status=201)
+    notify_resp = make_aiohttp_response({}, status=201)
     notify_sess = make_aiohttp_session(post_resp=notify_resp)
     sessions = iter([
         make_aiohttp_session(get_resp=list_resp),
@@ -239,16 +242,18 @@ async def test_add_to_waitlist_notification_includes_twitch_username():
     with patch("aiohttp.ClientSession", side_effect=lambda **kw: next(sessions)):
         await mail.add_to_waitlist("user@example.com", "coolstreamer")
     payload = notify_sess.post.call_args[1]["json"]
-    body = payload["Messages"][0]["TextPart"]
+    body = payload["textContent"]
     assert "coolstreamer" in body
     assert "user@example.com" in body
 
 
 async def test_add_to_waitlist_without_twitch_username_succeeds():
     """Twitch username is optional; omitting it must not break the call."""
-    list_resp   = make_aiohttp_response({"Count": 1, "Data": [{"ID": 3}]}, status=200)
-    add_resp    = make_aiohttp_response({}, status=201)
-    notify_resp = make_aiohttp_response({}, status=200)
+    list_resp = make_aiohttp_response(
+        {"lists": [{"id": 3, "name": "Thinvite"}]}, status=200
+    )
+    add_resp = make_aiohttp_response({}, status=201)
+    notify_resp = make_aiohttp_response({}, status=201)
     sessions = iter([
         make_aiohttp_session(get_resp=list_resp),
         make_aiohttp_session(post_resp=add_resp),
