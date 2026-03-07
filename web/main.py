@@ -1753,8 +1753,7 @@ ui.add_head_html(
 )
 
 ui.add_head_html(
-    '<meta name="description" content="Thinvite links Twitch channel point redemptions'
-    " to single-use Discord server invites \u2014 reward your viewers instantly.\">",
+    '<meta name="description" content="Twitch redeems -> Discord access. Securely.">',
     shared=True,
 )
 
