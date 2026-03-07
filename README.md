@@ -2,6 +2,8 @@
 
 Thinvite is an open-source solution that securely invites users to your Discord server by integrating Twitch channel point redeems with Discord invites. This limits the exposure of invite links and helps prevent malicious actors from accessing your community.
 
+> **Beta software** — Thinvite is under active development. APIs, database schema, and configuration may change between releases. Breaking changes will be noted in commit history.
+
 ## Features
 
 - **Twitch channel point integration** — link a custom redeem to automatic Discord invite generation
