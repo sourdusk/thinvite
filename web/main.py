@@ -1261,13 +1261,14 @@ async def contact_page():
                 # Verify Turnstile before touching any external service.
                 if _site_key:
                     token = await ui.run_javascript(
-                        "return window._turnstileToken || ''"
+                        "return window._turnstileToken || ''",
+                        timeout=5.0,
                     )
                     if not await captcha.verify_turnstile(token):
                         ui.notify(
                             "Security check failed. Please try again.", type="warning"
                         )
-                        await ui.run_javascript(
+                        ui.run_javascript(
                             "if (typeof turnstile !== 'undefined') turnstile.reset()"
                         )
                         return
@@ -1287,7 +1288,7 @@ async def contact_page():
                 # Reset Turnstile after each submission attempt so it can be
                 # used again (token is single-use).
                 if _site_key:
-                    await ui.run_javascript(
+                    ui.run_javascript(
                         "if (typeof turnstile !== 'undefined') turnstile.reset()"
                     )
 
@@ -1369,13 +1370,14 @@ async def waitlist_page():
 
                 if _site_key:
                     token = await ui.run_javascript(
-                        "return window._turnstileToken || ''"
+                        "return window._turnstileToken || ''",
+                        timeout=5.0,
                     )
                     if not await captcha.verify_turnstile(token):
                         ui.notify(
                             "Security check failed. Please try again.", type="warning"
                         )
-                        await ui.run_javascript(
+                        ui.run_javascript(
                             "if (typeof turnstile !== 'undefined') turnstile.reset()"
                         )
                         return
@@ -1394,7 +1396,7 @@ async def waitlist_page():
                     )
 
                 if _site_key:
-                    await ui.run_javascript(
+                    ui.run_javascript(
                         "if (typeof turnstile !== 'undefined') turnstile.reset()"
                     )
 

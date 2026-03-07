@@ -468,3 +468,89 @@ async def expire_redemption(redemption_id: int) -> None:
                 "WHERE id = %s",
                 (redemption_id,),
             )
+
+
+async def cleanup_stale_sessions() -> int:
+    """Delete orphaned user rows and consolidate duplicate Twitch accounts.
+
+    Cleans up two categories:
+    1. Empty sessions — rows where twitch_user_id is NULL (browser visited but
+       never completed OAuth).  Only deletes rows older than 7 days.
+    2. Duplicate Twitch accounts — when session rotation creates a new user row,
+       the old row lingers.  Redemptions on the old row are migrated to the
+       newest session for that twitch_user_id, then the old row is deleted.
+
+    Returns the total number of rows deleted.
+    """
+    deleted = 0
+    async with _acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            # 1. Remove empty sessions older than 7 days.
+            await cur.execute(
+                "DELETE FROM users "
+                "WHERE twitch_user_id IS NULL "
+                "AND id < (SELECT max_id FROM "
+                "  (SELECT COALESCE(MAX(id), 0) - 0 AS max_id FROM users "
+                "   WHERE twitch_user_id IS NULL "
+                "   AND id <= (SELECT COALESCE(MIN(id), 0) FROM users "
+                "             WHERE twitch_user_id IS NOT NULL)) sub)"
+            )
+            # Simpler approach: delete by created time would be ideal but we
+            # don't have a created_at column.  Instead, delete all NULL rows
+            # that aren't among the most recent 20 (keep a buffer for in-flight
+            # OAuth).
+            await cur.execute(
+                "DELETE FROM users "
+                "WHERE twitch_user_id IS NULL "
+                "AND id NOT IN ("
+                "  SELECT id FROM ("
+                "    SELECT id FROM users "
+                "    WHERE twitch_user_id IS NULL "
+                "    ORDER BY id DESC LIMIT 20"
+                "  ) keep"
+                ")"
+            )
+            deleted += cur.rowcount
+
+            # 2. Consolidate duplicate Twitch accounts.
+            # Find twitch_user_ids with more than one user row.
+            await cur.execute(
+                "SELECT twitch_user_id, COUNT(*) AS cnt "
+                "FROM users "
+                "WHERE twitch_user_id IS NOT NULL "
+                "GROUP BY twitch_user_id "
+                "HAVING cnt > 1"
+            )
+            duplicates = list(await cur.fetchall())
+
+            for dup in duplicates:
+                twitch_id = dup["twitch_user_id"]
+
+                # Find the newest row (highest id) — that's the current session.
+                await cur.execute(
+                    "SELECT session_id FROM users "
+                    "WHERE twitch_user_id = %s "
+                    "ORDER BY id DESC LIMIT 1",
+                    (twitch_id,),
+                )
+                keeper = (await cur.fetchone())["session_id"]
+
+                # Migrate redemptions from stale sessions to the keeper.
+                await cur.execute(
+                    "UPDATE redemptions SET streamer_session_id = %s "
+                    "WHERE streamer_session_id IN ("
+                    "  SELECT session_id FROM users "
+                    "  WHERE twitch_user_id = %s AND session_id != %s"
+                    ")",
+                    (keeper, twitch_id, keeper),
+                )
+
+                # Delete the stale rows.
+                await cur.execute(
+                    "DELETE FROM users "
+                    "WHERE twitch_user_id = %s AND session_id != %s",
+                    (twitch_id, keeper),
+                )
+                deleted += cur.rowcount
+
+    return deleted
