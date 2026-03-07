@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+web/.env
+web/.env.old
+.pytest_cache
+web/tests
+__pycache__
+*.pyc
+.vscode
+.idea
+CLAUDE.md
+.claude
