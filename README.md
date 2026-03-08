@@ -51,6 +51,8 @@ Thinvite is an open-source solution that securely invites users to your Discord 
    THINVITE_EVENTSUB_SECRET=generate_with_secrets_token_hex_32
    BREVO_API_KEY=your_brevo_api_key
    SENDER_ADDRESS=noreply@example.com
+   OWNER_EMAIL=you@example.com
+   OWNER_NAME=YourName
    TURNSTILE_SITE_KEY=your_turnstile_site_key
    TURNSTILE_SECRET_KEY=your_turnstile_secret_key
    ```

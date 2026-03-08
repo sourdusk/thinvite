@@ -38,6 +38,8 @@ def env_vars(monkeypatch):
     monkeypatch.setenv("NICEGUI_STORAGE_SECRET", "test_storage_secret")
     monkeypatch.setenv("THINVITE_EVENTSUB_SECRET", "test_eventsub_secret")
     monkeypatch.setenv("SITE_URL", "https://test.thinvite.com")
+    monkeypatch.setenv("OWNER_EMAIL", "owner@test.thinvite.com")
+    monkeypatch.setenv("OWNER_NAME", "TestOwner")
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 # Environment files
 .env
 web/.env
+web/.env.old
 web/beta_users.txt
 
 # Python

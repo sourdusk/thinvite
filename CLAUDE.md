@@ -15,4 +15,4 @@
 - Vue `:class` object: OR two statuses with `||` e.g. `props.row.status === 'A' || props.row.status === 'B'`
 
 ## Files to never commit
-- `web/.env.old` — contains old secrets, not yet gitignored; exclude explicitly when staging
+- `web/.env.old` — contains old secrets; gitignored

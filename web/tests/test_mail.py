@@ -62,7 +62,7 @@ async def test_send_contact_email_payload_to_is_owner():
     with patch("aiohttp.ClientSession", return_value=sess):
         await mail.send_contact_email("Alice", "alice@example.com", "My message")
     payload = sess.post.call_args[1]["json"]
-    assert payload["to"][0]["email"] == "dusk@sourk9.com"
+    assert payload["to"][0]["email"] == "owner@test.thinvite.com"
 
 
 async def test_send_contact_email_reply_to_is_sender():

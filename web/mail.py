@@ -23,7 +23,8 @@ Contact lists (v3 Contacts API)   — waitlist signups added to the "Thinvite" l
 Required environment variables (in web/.env):
     BREVO_API_KEY       Brevo API key
     SENDER_ADDRESS      A sender address verified in your Brevo account
-                        (e.g. noreply@thinvite.sourk9.com)
+    OWNER_EMAIL         Receives contact form and waitlist notifications
+    OWNER_NAME          Display name for the owner recipient
 """
 import logging
 import os
@@ -39,9 +40,6 @@ _SEND_URL = "https://api.brevo.com/v3/smtp/email"
 _CONTACTS_URL = "https://api.brevo.com/v3/contacts"
 _LISTS_URL = "https://api.brevo.com/v3/contacts/lists"
 _TIMEOUT = aiohttp.ClientTimeout(total=10)
-
-_OWNER_EMAIL = "dusk@sourk9.com"
-_OWNER_NAME = "SourK9"
 
 # In-process cache: contact list name → Brevo list ID
 _list_id_cache: dict = {}
@@ -60,7 +58,7 @@ def _headers() -> dict:
 
 
 def _sender_email() -> str:
-    return os.getenv("SENDER_ADDRESS", "noreply@thinvite.sourk9.com")
+    return os.getenv("SENDER_ADDRESS", "")
 
 
 async def _send(payload: dict) -> bool:
@@ -142,7 +140,7 @@ async def send_contact_email(
     """
     payload = {
         "sender": {"email": _sender_email(), "name": "Thinvite"},
-        "to": [{"email": _OWNER_EMAIL, "name": _OWNER_NAME}],
+        "to": [{"email": os.getenv("OWNER_EMAIL", ""), "name": os.getenv("OWNER_NAME", "")}],
         "replyTo": {"email": from_email, "name": from_name},
         "subject": f"[Thinvite Contact] Message from {from_name}",
         "textContent": (
@@ -167,7 +165,7 @@ async def add_to_waitlist(email: str, twitch_username: str = "") -> bool:
 
     payload = {
         "sender": {"email": _sender_email(), "name": "Thinvite"},
-        "to": [{"email": _OWNER_EMAIL, "name": _OWNER_NAME}],
+        "to": [{"email": os.getenv("OWNER_EMAIL", ""), "name": os.getenv("OWNER_NAME", "")}],
         "subject": "[Thinvite] New Waitlist Signup",
         "textContent": body,
     }
