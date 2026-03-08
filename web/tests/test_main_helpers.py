@@ -128,16 +128,16 @@ class TestIsFormOnCooldown:
         result = main._is_form_on_cooldown("contact")
         assert result is False
 
-    def test_first_call_stamps_timestamp(self, user_storage):
+    def test_set_cooldown_stamps_timestamp(self, user_storage):
         before = time.time()
-        main._is_form_on_cooldown("contact")
+        main._set_form_cooldown("contact")
         after = time.time()
         stamped = user_storage["_form_ts_contact"]
         assert before <= stamped <= after
 
-    def test_second_call_within_window_is_on_cooldown(self, user_storage):
-        main._is_form_on_cooldown("contact")   # first call — stamps timestamp
-        result = main._is_form_on_cooldown("contact")  # second call — on cooldown
+    def test_check_after_set_is_on_cooldown(self, user_storage):
+        main._set_form_cooldown("contact")
+        result = main._is_form_on_cooldown("contact")
         assert result is True
 
     def test_call_after_window_is_not_on_cooldown(self, user_storage, monkeypatch):
@@ -148,11 +148,11 @@ class TestIsFormOnCooldown:
         assert result is False
 
     def test_different_keys_are_independent(self, user_storage):
-        main._is_form_on_cooldown("contact")   # stamps "contact"
+        main._set_form_cooldown("contact")
         # "waitlist" has no timestamp yet — must not be on cooldown.
         result = main._is_form_on_cooldown("waitlist")
         assert result is False
 
-    def test_same_key_called_twice_second_is_throttled(self, user_storage):
-        main._is_form_on_cooldown("waitlist")
+    def test_same_key_set_twice_second_check_is_throttled(self, user_storage):
+        main._set_form_cooldown("waitlist")
         assert main._is_form_on_cooldown("waitlist") is True
