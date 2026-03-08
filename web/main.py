@@ -387,6 +387,120 @@ async def home_page():
             "and receive a unique, single-use invite link. No sharing, no abuse.</p>",
             sanitize=False,
         )
+        ui.html(
+            '<a href="/about" class="th-about-link">Learn how it works &rarr;</a>',
+            sanitize=False,
+        )
+        with ui.element("div").classes("th-cta-row"):
+            ui.button("I\u2019m a streamer", on_click=lambda: ui.navigate.to("/streamer"), color=None).classes(
+                "th-btn-primary"
+            ).props("no-caps unelevated")
+            ui.button("Redeem an invite", on_click=lambda: ui.navigate.to("/redeem"), color=None).classes(
+                "th-btn-secondary"
+            ).props("no-caps outline")
+    footer()
+
+
+@ui.page("/about", dark=True)
+async def about_page():
+    header()
+    with ui.element("div").classes("th-about"):
+        # Hero
+        with ui.element("div").classes("th-about-hero"):
+            ui.html(
+                '<p class="th-label">How It Works</p>'
+                '<h1>Twitch channel points.<br>Discord invites.<br>'
+                'One seamless bridge.</h1>'
+                '<p class="th-body">Thinvite is a free, open-source service that lets '
+                "streamers gate Discord access behind a Twitch channel point redeem. "
+                "Every invite is single-use, time-limited, and tied to a verified viewer.</p>",
+                sanitize=False,
+            )
+
+        # For Streamers
+        with ui.element("div").classes("th-about-section"):
+            ui.html('<p class="th-about-section-title">For Streamers</p>', sanitize=False)
+            ui.html(
+                '<div class="th-about-step">'
+                '<span class="th-about-step-num">1</span>'
+                '<div class="th-about-step-content">'
+                "<h3>Connect your accounts</h3>"
+                "<p>Sign in with Twitch and Discord, then pick the server "
+                "you want to invite viewers to.</p>"
+                "</div></div>",
+                sanitize=False,
+            )
+            ui.html(
+                '<div class="th-about-step">'
+                '<span class="th-about-step-num">2</span>'
+                '<div class="th-about-step-content">'
+                "<h3>Pick a channel point redeem</h3>"
+                "<p>Choose which redeem triggers an invite. Thinvite automatically "
+                "disables skip-queue so every redemption is verified.</p>"
+                "</div></div>",
+                sanitize=False,
+            )
+            ui.html(
+                '<div class="th-about-step">'
+                '<span class="th-about-step-num">3</span>'
+                '<div class="th-about-step-content">'
+                "<h3>Sit back</h3>"
+                "<p>Invite creation, delivery, duplicate detection, and 24-hour "
+                "expiry are all handled automatically. You can revoke invites "
+                "individually or in bulk from your dashboard.</p>"
+                "</div></div>",
+                sanitize=False,
+            )
+
+        # For Viewers
+        with ui.element("div").classes("th-about-section"):
+            ui.html('<p class="th-about-section-title">For Viewers</p>', sanitize=False)
+            ui.html(
+                '<div class="th-about-step">'
+                '<span class="th-about-step-num">1</span>'
+                '<div class="th-about-step-content">'
+                "<h3>Redeem channel points</h3>"
+                "<p>Use the streamer\u2019s chosen channel point redeem on Twitch, "
+                "just like any other reward.</p>"
+                "</div></div>",
+                sanitize=False,
+            )
+            ui.html(
+                '<div class="th-about-step">'
+                '<span class="th-about-step-num">2</span>'
+                '<div class="th-about-step-content">'
+                "<h3>Sign in to verify</h3>"
+                "<p>Sign in with your Twitch account on Thinvite. This confirms "
+                "you\u2019re the person who redeemed the points.</p>"
+                "</div></div>",
+                sanitize=False,
+            )
+            ui.html(
+                '<div class="th-about-step">'
+                '<span class="th-about-step-num">3</span>'
+                '<div class="th-about-step-content">'
+                "<h3>Get your invite</h3>"
+                "<p>Receive a single-use Discord invite link. "
+                "No sharing, no abuse.</p>"
+                "</div></div>",
+                sanitize=False,
+            )
+
+        # Free & Open Source
+        ui.html(
+            '<div class="th-about-oss">'
+            "<h2>Free &amp; Open Source</h2>"
+            '<p class="th-body">Thinvite is completely free to use. No premium tiers, '
+            "no data selling, no catch. The source code is publicly available "
+            "so you can inspect, contribute, or self-host.</p>"
+            '<p class="th-body">'
+            '<a href="https://github.com/sourdusk/thinvite" target="_blank" '
+            'rel="noopener">View on GitHub &rarr;</a></p>'
+            "</div>",
+            sanitize=False,
+        )
+
+        # CTA
         with ui.element("div").classes("th-cta-row"):
             ui.button("I\u2019m a streamer", on_click=lambda: ui.navigate.to("/streamer"), color=None).classes(
                 "th-btn-primary"

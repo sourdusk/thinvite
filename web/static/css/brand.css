@@ -279,6 +279,138 @@ body {
   justify-content: center;
 }
 
+/* ── ABOUT PAGE ────────────────────────────────────────────────── */
+.th-about {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-16) var(--space-6) var(--space-24);
+  gap: var(--space-16);
+  box-sizing: border-box;
+}
+
+.th-about-hero {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.th-about-hero h1 {
+  font-family: var(--font-body);
+  font-weight: var(--fw-light);
+  font-size: 42px;
+  letter-spacing: var(--ls-tightest);
+  line-height: var(--lh-tight);
+  color: var(--color-frost);
+  margin: 0;
+}
+
+.th-about-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.th-about-section-title {
+  font-family: var(--font-display);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-16);
+  letter-spacing: var(--ls-widest-1);
+  text-transform: uppercase;
+  color: var(--color-violet-lt);
+  margin: 0;
+}
+
+.th-about-step {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-start;
+}
+
+.th-about-step-num {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--color-violet-tint-13);
+  border: 1px solid var(--color-violet-tint-25);
+  font-family: var(--font-display);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-14);
+  color: var(--color-violet-lt);
+}
+
+.th-about-step-content h3 {
+  font-family: var(--font-body);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-16);
+  color: var(--color-frost);
+  margin: 0 0 var(--space-1) 0;
+}
+
+.th-about-step-content p {
+  font-family: var(--font-body);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-15);
+  line-height: var(--lh-base);
+  color: var(--color-body-text);
+  margin: 0;
+}
+
+.th-about-oss {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-8);
+  background: var(--color-surface-2);
+  border: var(--border-default);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.th-about-oss h2 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-24);
+  letter-spacing: var(--ls-tight);
+  color: var(--color-frost);
+  margin: 0;
+}
+
+.th-about-oss a {
+  color: var(--color-violet-lt);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.th-about-oss a:hover {
+  color: var(--color-frost);
+}
+
+.th-about-link {
+  font-family: var(--font-body);
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-15);
+  color: var(--color-violet-lt);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.th-about-link:hover {
+  color: var(--color-frost);
+}
+
 /* ── PAGE WRAPPER ───────────────────────────────────────────────── */
 /* Used by card pages to vertically centre the card */
 .th-page-wrap {
