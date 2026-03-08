@@ -1783,4 +1783,5 @@ ui.run(
     title="Thinvite",
     forwarded_allow_ips="127.0.0.1",
     session_middleware_kwargs={"https_only": True},
+    reload_excludes=["**/beta_users.txt"],
 )
