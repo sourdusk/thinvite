@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS users (
     discord_user_id VARCHAR(255),
     discord_server_id VARCHAR(255),
     discord_auth_code VARCHAR(255),
+    ext_min_follow_days INT DEFAULT NULL,
+    ext_cooldown_days INT DEFAULT NULL,
     INDEX idx_twitch_user_id (twitch_user_id)
 );
 
@@ -48,6 +50,7 @@ CREATE TABLE IF NOT EXISTS redemptions (
     is_manual BOOLEAN DEFAULT FALSE,
     twitch_redemption_id VARCHAR(255),
     twitch_reward_id VARCHAR(255),
+    source VARCHAR(32) NOT NULL DEFAULT 'channel_points',
     redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fulfilled_at TIMESTAMP NULL,
     revoked_at TIMESTAMP NULL,
