@@ -21,8 +21,15 @@
       <h2>Thinvite Settings</h2>
     </div>
 
-    <label class="field-label" for="min-follow">Minimum follow age (days)</label>
-    <input type="number" id="min-follow" min="0" value="30">
+    <label class="field-label" for="min-follow">Minimum follow age</label>
+    <div style="display: flex; gap: 8px;">
+      <input type="number" id="min-follow" min="0" value="30" style="flex: 1;">
+      <select id="min-follow-unit">
+        <option value="minutes">minutes</option>
+        <option value="hours">hours</option>
+        <option value="days" selected>days</option>
+      </select>
+    </div>
 
     <label class="field-label" for="cooldown">Cooldown between invites (days)</label>
     <input type="number" id="cooldown" min="1" value="30">

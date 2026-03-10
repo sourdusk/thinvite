@@ -596,9 +596,9 @@ async def fulfill_redemption(
 # ---------------------------------------------------------------------------
 
 async def get_follow_age(broadcaster_id: str, user_id: str, token: str) -> int | None:
-    """Get how many days user_id has followed broadcaster_id.
+    """Get how many minutes user_id has followed broadcaster_id.
 
-    Returns days as int, or None if not following.
+    Returns minutes as int, or None if not following.
     Retries once with a refreshed token on 401.
     """
     from datetime import datetime, timezone
@@ -645,4 +645,4 @@ async def get_follow_age(broadcaster_id: str, user_id: str, token: str) -> int |
 
     followed_at = datetime.fromisoformat(follows[0]["followed_at"].replace("Z", "+00:00"))
     now = datetime.now(timezone.utc)
-    return (now - followed_at).days
+    return int((now - followed_at).total_seconds() // 60)

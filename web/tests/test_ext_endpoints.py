@@ -59,7 +59,7 @@ async def test_ext_status_eligible():
          patch("twitch.get_follow_age", new_callable=AsyncMock, return_value=60):
         result = await main._ext_get_status(user_id="99999", channel_id="11111")
     assert result["follow_age_eligible"] is True
-    assert result["follow_age_days"] == 60
+    assert result["follow_age_minutes"] == 60
 
 
 async def test_ext_status_pending_redemption():

@@ -787,11 +787,26 @@ async def streamer_page():
                 fa_container.set_visibility(fa_enabled)
 
                 with fa_container:
-                    min_follow = ui.number(
-                        "Minimum follow age (days)",
-                        value=user_record.get("ext_min_follow_days") or 0,
-                        min=0, step=1,
-                    ).props("outlined dense")
+                    # Convert stored minutes to a friendly display value
+                    _stored_min = user_record.get("ext_min_follow_days") or 0
+                    if _stored_min >= 1440 and _stored_min % 1440 == 0:
+                        _display_val, _display_unit = _stored_min // 1440, "days"
+                    elif _stored_min >= 60 and _stored_min % 60 == 0:
+                        _display_val, _display_unit = _stored_min // 60, "hours"
+                    else:
+                        _display_val, _display_unit = _stored_min, "minutes"
+
+                    with ui.row().classes("items-end gap-sm"):
+                        min_follow = ui.number(
+                            "Minimum follow age",
+                            value=_display_val,
+                            min=0, step=1,
+                        ).props("outlined dense").style("width: 160px")
+                        min_follow_unit = ui.select(
+                            {"minutes": "minutes", "hours": "hours", "days": "days"},
+                            value=_display_unit,
+                        ).props("outlined dense").style("width: 120px")
+
                     cooldown_input = ui.number(
                         "Cooldown between invites (days)",
                         value=user_record.get("ext_cooldown_days") or 30,
@@ -799,10 +814,14 @@ async def streamer_page():
                     ).props("outlined dense")
 
                     async def save_ext_config():
+                        val = int(min_follow.value)
+                        unit = min_follow_unit.value
+                        if unit == "hours":
+                            val *= 60
+                        elif unit == "days":
+                            val *= 1440
                         await db.set_ext_config(
-                            _sess_id(),
-                            int(min_follow.value),
-                            int(cooldown_input.value),
+                            _sess_id(), val, int(cooldown_input.value),
                         )
                         ui.notify("Extension settings saved!", type="positive")
 
@@ -2061,7 +2080,7 @@ async def _ext_get_status(user_id: str, channel_id: str) -> dict:
         return {"error": "not_configured"}
 
     sess_id = config["session_id"]
-    min_days = config["ext_min_follow_days"] or 0
+    min_minutes = config["ext_min_follow_days"] or 0  # column stores minutes now
     cooldown = config["ext_cooldown_days"] or 30
 
     # Check pending channel-point redemptions for this streamer
@@ -2072,29 +2091,29 @@ async def _ext_get_status(user_id: str, channel_id: str) -> dict:
     # Check cooldown
     on_cooldown = await db.has_recent_invite(user_id, sess_id, cooldown)
 
-    # Check follow age (cached)
-    follow_days = None
+    # Check follow age (cached, in minutes)
+    follow_minutes = None
     follow_eligible = False
     if not on_cooldown:
         cache_key = f"{channel_id}:{user_id}"
         cached = _follow_age_cache.get(cache_key)
         if cached and (time.time() - cached[1]) < _FOLLOW_AGE_CACHE_TTL:
-            follow_days = cached[0]
+            follow_minutes = cached[0]
         else:
             user_row = await db.get_user_by_twitch_id(channel_id)
             if user_row and user_row.get("twitch_auth_token"):
-                follow_days = await twitch.get_follow_age(
+                follow_minutes = await twitch.get_follow_age(
                     channel_id, user_id, user_row["twitch_auth_token"]
                 )
-                _follow_age_cache[cache_key] = (follow_days, time.time())
-        if follow_days is not None:
-            follow_eligible = follow_days >= min_days
+                _follow_age_cache[cache_key] = (follow_minutes, time.time())
+        if follow_minutes is not None:
+            follow_eligible = follow_minutes >= min_minutes
 
     return {
         "has_pending_redemption": has_pending,
         "follow_age_eligible": follow_eligible,
-        "follow_age_days": follow_days,
-        "min_follow_days": min_days,
+        "follow_age_minutes": follow_minutes,
+        "min_follow_minutes": min_minutes,
         "on_cooldown": on_cooldown,
     }
 
@@ -2160,14 +2179,14 @@ async def ext_claim(request: Request):
         return JSONResponse({"invite_url": invite_url})
 
     elif claim_type == "follow_age":
-        min_days = config["ext_min_follow_days"] or 0
+        min_minutes = config["ext_min_follow_days"] or 0  # column stores minutes now
         user_row = await db.get_user_by_twitch_id(claims["channel_id"])
         if not user_row or not user_row.get("twitch_auth_token"):
             return JSONResponse({"error": "streamer_token_missing"}, 500)
-        follow_days = await twitch.get_follow_age(
+        follow_minutes = await twitch.get_follow_age(
             claims["channel_id"], claims["user_id"], user_row["twitch_auth_token"]
         )
-        if follow_days is None or follow_days < min_days:
+        if follow_minutes is None or follow_minutes < min_minutes:
             return JSONResponse({"error": "not_eligible"}, 403)
         invite_url = await discorddb.create_invite(guild_id)
         if not invite_url:
@@ -2191,11 +2210,11 @@ async def ext_config(request: Request):
         return JSONResponse({"error": "broadcaster_only"}, 403)
 
     body = await request.json()
-    min_follow = body.get("min_follow_days")
+    min_follow = body.get("min_follow_minutes")
     cooldown = body.get("cooldown_days")
 
     if not isinstance(min_follow, int) or min_follow < 0:
-        return JSONResponse({"error": "invalid_min_follow_days"}, 400)
+        return JSONResponse({"error": "invalid_min_follow_minutes"}, 400)
     if not isinstance(cooldown, int) or cooldown < 1:
         return JSONResponse({"error": "invalid_cooldown_days"}, 400)
 

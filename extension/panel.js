@@ -7,6 +7,19 @@
   var userId = null;
   var channelId = null;
 
+  // --- Helpers -------------------------------------------------------------
+
+  function formatDuration(minutes) {
+    if (minutes >= 1440) {
+      var days = Math.floor(minutes / 1440);
+      return days + " day" + (days !== 1 ? "s" : "");
+    } else if (minutes >= 60) {
+      var hours = Math.floor(minutes / 60);
+      return hours + " hour" + (hours !== 1 ? "s" : "");
+    }
+    return minutes + " minute" + (minutes !== 1 ? "s" : "");
+  }
+
   // --- State management ---------------------------------------------------
 
   function showState(id) {
@@ -28,7 +41,7 @@
     token = auth.token;
     channelId = auth.channelId;
 
-    if (!auth.userId || auth.userId.startsWith("A")) {
+    if (!auth.userId || !/^\d+$/.test(auth.userId)) {
       // Opaque / anonymous user — needs to share identity
       showState("identity-required");
       return;
@@ -106,15 +119,14 @@
         showState("pending");
       } else if (d.follow_age_eligible) {
         document.getElementById("eligible-text").textContent =
-          "You\u2019ve followed for " + d.follow_age_days +
-          " day" + (d.follow_age_days !== 1 ? "s" : "") +
+          "You\u2019ve followed for " + formatDuration(d.follow_age_minutes) +
           " \u2014 claim your Discord invite!";
         showState("eligible");
-      } else if (d.follow_age_days !== null) {
-        var needed = d.min_follow_days - d.follow_age_days;
+      } else if (d.follow_age_minutes !== null) {
+        var needed = d.min_follow_minutes - d.follow_age_minutes;
         document.getElementById("not-eligible-text").textContent =
-          "Follow for " + needed + " more day" + (needed !== 1 ? "s" : "") +
-          " to earn a Discord invite.";
+          "Follow for " + formatDuration(needed) +
+          " more to earn a Discord invite.";
         showState("not-eligible");
       } else {
         document.getElementById("not-eligible-text").textContent =
