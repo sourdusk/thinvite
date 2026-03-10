@@ -73,9 +73,28 @@ class _SecurityHeadersMiddleware:
     def __init__(self, app) -> None:
         self.app = app
 
+    _EXT_CORS_ORIGIN = b"https://extension-files.twitch.tv"
+    _EXT_CORS_HEADERS = [
+        (b"access-control-allow-origin", b"https://extension-files.twitch.tv"),
+        (b"access-control-allow-headers", b"Authorization, Content-Type"),
+        (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
+        (b"access-control-max-age", b"86400"),
+    ]
+
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+
+        # CORS preflight for extension routes — respond immediately
+        path = scope.get("path", "")
+        if path.startswith("/api/ext/") and scope.get("method") == "OPTIONS":
+            await send({
+                "type": "http.response.start",
+                "status": 204,
+                "headers": list(self._EXT_CORS_HEADERS),
+            })
+            await send({"type": "http.response.body", "body": b""})
             return
 
         async def send_with_headers(message):
@@ -109,6 +128,12 @@ class _SecurityHeadersMiddleware:
                 )
                 if not is_static:
                     headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                # CORS headers for extension routes
+                if path.startswith("/api/ext/"):
+                    headers["Access-Control-Allow-Origin"] = "https://extension-files.twitch.tv"
+                    headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+                    headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                    headers["Access-Control-Max-Age"] = "86400"
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
