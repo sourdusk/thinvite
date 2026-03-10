@@ -609,71 +609,6 @@ async def streamer_page():
                 ui.button(
                     "Disconnect Twitch", color="negative", on_click=disconnect_twitch
                 ).props("flat size=sm").classes("q-mt-sm")
-
-                redeems_raw = await twitch.get_channel_redeems(_sess_id())
-
-                if redeems_raw is None:
-                    ui.label(
-                        "Could not load channel point redeems. Please refresh the page."
-                    ).classes("text-body2 text-center text-negative")
-                else:
-                    redeems = {r["id"]: r["title"] for r in redeems_raw}
-                    redeems_full = {r["id"]: r for r in redeems_raw}
-                    current_redeem = await twitch.get_set_redeem(_sess_id())
-                    if current_redeem is None and redeems:
-                        current_redeem = (
-                            next((rid for rid, title in redeems.items() if "discord" in title.lower()), None)
-                            or next((rid for rid, title in redeems.items() if "server" in title.lower()), None)
-                            or next(iter(redeems))
-                        )
-                        await twitch.update_twitch_redeem(_sess_id(), current_redeem)
-                    ui.label("Select the channel point redeem").classes("text-body2 text-center")
-                    ui.label("viewers must use to receive a Discord invite:").classes("text-body2 text-center")
-                    sel = ui.select(redeems, value=current_redeem).classes("fit-width")
-
-                    async def update_redeem():
-                        new_id = sel.value
-                        if new_id == current_redeem:
-                            ui.notify("That redeem is already selected.", type="info")
-                            return
-
-                        reward = redeems_full.get(new_id, {})
-                        skips_queue = reward.get("should_redemptions_skip_request_queue", False)
-
-                        async def _apply_update():
-                            # Always disable skip_request_queue so redemptions
-                            # stay in the queue where Thinvite can manage them.
-                            await twitch.update_reward_queue_setting(
-                                _sess_id(), new_id, False
-                            )
-                            ok = await twitch.update_twitch_redeem(_sess_id(), new_id)
-                            if ok:
-                                ui.notify("Redeem updated!", type="positive")
-                                ui.navigate.to("/streamer")
-                            else:
-                                ui.notify("Failed to update redeem.", type="negative")
-
-                        if skips_queue:
-                            with ui.dialog() as skip_dlg, ui.card().classes("q-pa-md"):
-                                ui.label("Queue setting conflict").classes("text-h6")
-                                ui.label(
-                                    "This redeem currently skips the request queue. "
-                                    "Thinvite needs 'Skip Request Queue' set to Off so "
-                                    "it can manage redemptions. Proceed and change it?"
-                                ).classes("q-mt-sm text-body2")
-                                with ui.row().classes("justify-end q-mt-lg gap-sm"):
-                                    ui.button("Cancel", on_click=skip_dlg.close).props("flat")
-
-                                    async def _confirm_queue():
-                                        skip_dlg.close()
-                                        await _apply_update()
-
-                                    ui.button("Proceed", on_click=_confirm_queue, color="primary")
-                            skip_dlg.open()
-                        else:
-                            await _apply_update()
-
-                    ui.button(color="#6441a5", text="Submit", on_click=update_redeem)
         else:
             with ui.column().classes("items-center"):
                 with ui.button(color="#6441a5", on_click=twitch_login).style(
@@ -724,38 +659,151 @@ async def streamer_page():
                     "Disconnect Discord", color="negative", on_click=disconnect_discord
                 ).props("flat size=sm").classes("q-mt-sm")
 
-    # --- Extension Panel Settings ---
+    # --- Invite Settings (channel points + follow-age toggles) ---
     if twitch_user_exists and discord_connected and user_record:
         ui.separator().classes("q-my-lg")
         with ui.row().classes("window-width row justify-center items-center"):
-            ui.label("Extension Panel Settings").classes("text-h5")
-        with ui.row().classes("window-width row justify-center items-center q-mb-sm"):
-            ui.label(
-                "Configure the Twitch panel extension for follow-age invites."
-            ).classes("text-body2 text-center")
-        with ui.row().classes("window-width row justify-center items-center"):
-            with ui.column().classes("items-center"):
-                min_follow = ui.number(
-                    "Minimum follow age (days)",
-                    value=user_record.get("ext_min_follow_days") or 0,
-                    min=0, step=1,
-                ).props("outlined dense")
-                cooldown_input = ui.number(
-                    "Cooldown between invites (days)",
-                    value=user_record.get("ext_cooldown_days") or 30,
-                    min=1, step=1,
-                ).props("outlined dense")
+            ui.label("Invite Settings").classes("text-h5")
 
-                async def save_ext_config():
-                    await db.set_ext_config(
-                        _sess_id(), int(min_follow.value), int(cooldown_input.value)
-                    )
-                    ui.notify("Extension settings saved!", type="positive")
+        # -- Channel Point Redeems toggle --
+        current_redeem = await twitch.get_set_redeem(_sess_id())
+        cp_enabled = current_redeem is not None
 
-                ui.button(
-                    "Save Extension Settings", on_click=save_ext_config,
-                    color="#6441a5",
-                ).classes("q-mt-sm")
+        with ui.row().classes("window-width row justify-center items-center q-mt-md"):
+            with ui.column().classes("items-center").style("max-width: 400px; width: 100%"):
+                cp_toggle = ui.switch(
+                    "Channel Point Redeems", value=cp_enabled,
+                ).classes("q-mb-sm")
+
+                cp_container = ui.column().classes("items-center full-width")
+                cp_container.set_visibility(cp_enabled)
+
+                with cp_container:
+                    redeems_raw = await twitch.get_channel_redeems(_sess_id())
+                    if redeems_raw is None:
+                        ui.label(
+                            "Could not load channel point redeems. Please refresh."
+                        ).classes("text-body2 text-center text-negative")
+                    else:
+                        redeems = {r["id"]: r["title"] for r in redeems_raw}
+                        redeems_full = {r["id"]: r for r in redeems_raw}
+                        ui.label(
+                            "Select the channel point redeem viewers must use:"
+                        ).classes("text-body2 text-center")
+                        sel = ui.select(redeems, value=current_redeem).classes("fit-width")
+
+                        async def update_redeem():
+                            new_id = sel.value
+                            if new_id == current_redeem:
+                                ui.notify("That redeem is already selected.", type="info")
+                                return
+
+                            reward = redeems_full.get(new_id, {})
+                            skips_queue = reward.get(
+                                "should_redemptions_skip_request_queue", False
+                            )
+
+                            async def _apply_update():
+                                await twitch.update_reward_queue_setting(
+                                    _sess_id(), new_id, False
+                                )
+                                ok = await twitch.update_twitch_redeem(_sess_id(), new_id)
+                                if ok:
+                                    ui.notify("Redeem updated!", type="positive")
+                                    ui.navigate.to("/streamer")
+                                else:
+                                    ui.notify("Failed to update redeem.", type="negative")
+
+                            if skips_queue:
+                                with ui.dialog() as skip_dlg, ui.card().classes("q-pa-md"):
+                                    ui.label("Queue setting conflict").classes("text-h6")
+                                    ui.label(
+                                        "This redeem currently skips the request queue. "
+                                        "Thinvite needs 'Skip Request Queue' set to Off "
+                                        "so it can manage redemptions. Proceed?"
+                                    ).classes("q-mt-sm text-body2")
+                                    with ui.row().classes("justify-end q-mt-lg gap-sm"):
+                                        ui.button(
+                                            "Cancel", on_click=skip_dlg.close
+                                        ).props("flat")
+
+                                        async def _confirm_queue():
+                                            skip_dlg.close()
+                                            await _apply_update()
+
+                                        ui.button(
+                                            "Proceed", on_click=_confirm_queue,
+                                            color="primary",
+                                        )
+                                skip_dlg.open()
+                            else:
+                                await _apply_update()
+
+                        ui.button(
+                            color="#6441a5", text="Save Redeem", on_click=update_redeem,
+                        )
+
+                async def _toggle_cp(e):
+                    if e.value:
+                        cp_container.set_visibility(True)
+                        # Re-subscribe to EventSub so we receive redemption events
+                        u = await db.get_user_by_session_id(_sess_id())
+                        if u and u.get("discord_server_id"):
+                            asyncio.create_task(bot.subscribe(u))
+                    else:
+                        await twitch.update_twitch_redeem(_sess_id(), None)
+                        await bot.unsubscribe(_sess_id())
+                        cp_container.set_visibility(False)
+                        ui.notify("Channel point redeems disabled.", type="info")
+
+                cp_toggle.on_value_change(_toggle_cp)
+
+        # -- Follow Age Invites toggle --
+        fa_enabled = user_record.get("ext_min_follow_days") is not None
+
+        with ui.row().classes("window-width row justify-center items-center q-mt-lg"):
+            with ui.column().classes("items-center").style("max-width: 400px; width: 100%"):
+                fa_toggle = ui.switch(
+                    "Follow Age Invites (Extension Panel)", value=fa_enabled,
+                ).classes("q-mb-sm")
+
+                fa_container = ui.column().classes("items-center full-width")
+                fa_container.set_visibility(fa_enabled)
+
+                with fa_container:
+                    min_follow = ui.number(
+                        "Minimum follow age (days)",
+                        value=user_record.get("ext_min_follow_days") or 0,
+                        min=0, step=1,
+                    ).props("outlined dense")
+                    cooldown_input = ui.number(
+                        "Cooldown between invites (days)",
+                        value=user_record.get("ext_cooldown_days") or 30,
+                        min=1, step=1,
+                    ).props("outlined dense")
+
+                    async def save_ext_config():
+                        await db.set_ext_config(
+                            _sess_id(),
+                            int(min_follow.value),
+                            int(cooldown_input.value),
+                        )
+                        ui.notify("Extension settings saved!", type="positive")
+
+                    ui.button(
+                        "Save Extension Settings", on_click=save_ext_config,
+                        color="#6441a5",
+                    ).classes("q-mt-sm")
+
+                async def _toggle_fa(e):
+                    if e.value:
+                        fa_container.set_visibility(True)
+                    else:
+                        await db.set_ext_config(_sess_id(), None, None)
+                        fa_container.set_visibility(False)
+                        ui.notify("Follow age invites disabled.", type="info")
+
+                fa_toggle.on_value_change(_toggle_fa)
 
     # Manual invite + redemption history (only when fully set up)
     if twitch_user_exists and discord_connected:

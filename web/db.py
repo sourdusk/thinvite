@@ -145,7 +145,7 @@ async def update_twitch_user_info(sess_id: str, username: str, user_id: str) -> 
             return True
 
 
-async def update_twitch_redeem(sess_id: str, redeem_id: str) -> None:
+async def update_twitch_redeem(sess_id: str, redeem_id: str | None) -> None:
     async with _acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
@@ -474,8 +474,13 @@ async def expire_redemption(redemption_id: int) -> None:
 # Extension helpers
 # ---------------------------------------------------------------------------
 
-async def set_ext_config(session_id: str, min_follow_days: int, cooldown_days: int) -> None:
-    """Set extension config (min follow age, cooldown) for a streamer."""
+async def set_ext_config(
+    session_id: str, min_follow_days: int | None, cooldown_days: int | None,
+) -> None:
+    """Set extension config (min follow age, cooldown) for a streamer.
+
+    Pass None for both to disable follow-age invites.
+    """
     async with _acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(

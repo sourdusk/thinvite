@@ -390,8 +390,8 @@ async def user_exists(sess_id: str) -> bool:
     return res is not None and res.get("twitch_user_id") is not None
 
 
-async def update_twitch_redeem(sess_id: str, redeem_id: str) -> bool:
-    if not sanitize.is_valid_uuid(redeem_id):
+async def update_twitch_redeem(sess_id: str, redeem_id: str | None) -> bool:
+    if redeem_id is not None and not sanitize.is_valid_uuid(redeem_id):
         return False
 
     async with db._acquire() as conn:
