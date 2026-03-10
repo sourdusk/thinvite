@@ -49,6 +49,7 @@ import bot
 import captcha
 import discorddb
 import expiry
+import ext_pubsub
 import mail
 import twitch
 import db
@@ -1774,8 +1775,30 @@ async def _handle_eventsub_event(payload: dict) -> None:
         )
         return
 
+    # Unified cooldown — cancel if viewer already has a recent invite
+    # (covers follow-age claims too)
+    cooldown_days = user.get("ext_cooldown_days") or 30
+    if await db.has_recent_invite(viewer_id, sess_id, cooldown_days):
+        logger.info("Viewer %s has recent invite, cancelling redemption", redeemer)
+        await twitch.cancel_redemption(
+            broadcaster_user_id, twitch_reward_id, twitch_redemption_id, token
+        )
+        await twitch.send_chat_message(
+            broadcaster_user_id, broadcaster_user_id,
+            f"@{redeemer} You already have a recent invite. Points refunded.",
+            token,
+        )
+        return
+
     await db.add_redemption(
         sess_id, viewer_id, redeemer, twitch_redemption_id, twitch_reward_id
+    )
+
+    # Notify the viewer's extension panel (if they have it open)
+    asyncio.create_task(
+        ext_pubsub.send_whisper(
+            broadcaster_user_id, viewer_id, {"type": "redemption_ready"}
+        )
     )
 
     site_url = _SITE_URL.rstrip("/")
