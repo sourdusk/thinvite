@@ -1915,6 +1915,168 @@ if _roboto_css:
     ui.add_head_html(_roboto_css, shared=True)
 
 
+# ---------------------------------------------------------------------------
+# Extension EBS endpoints
+# ---------------------------------------------------------------------------
+import ext_auth
+
+_follow_age_cache: dict[str, tuple[int | None, float]] = {}
+_FOLLOW_AGE_CACHE_TTL = 600  # 10 minutes
+
+
+async def _ext_get_status(user_id: str, channel_id: str) -> dict:
+    """Core logic for GET /api/ext/status."""
+    config = await db.get_ext_config(channel_id)
+    if not config:
+        return {"error": "not_configured"}
+
+    sess_id = config["session_id"]
+    min_days = config["ext_min_follow_days"] or 0
+    cooldown = config["ext_cooldown_days"] or 30
+
+    # Check pending channel-point redemptions for this streamer
+    pending = await db.get_pending_redemptions_for_viewer(user_id)
+    pending_here = [r for r in pending if r["streamer_session_id"] == sess_id]
+    has_pending = len(pending_here) > 0
+
+    # Check cooldown
+    on_cooldown = await db.has_recent_invite(user_id, sess_id, cooldown)
+
+    # Check follow age (cached)
+    follow_days = None
+    follow_eligible = False
+    if not on_cooldown:
+        cache_key = f"{channel_id}:{user_id}"
+        cached = _follow_age_cache.get(cache_key)
+        if cached and (time.time() - cached[1]) < _FOLLOW_AGE_CACHE_TTL:
+            follow_days = cached[0]
+        else:
+            user_row = await db.get_user_by_twitch_id(channel_id)
+            if user_row and user_row.get("twitch_auth_token"):
+                follow_days = await twitch.get_follow_age(
+                    channel_id, user_id, user_row["twitch_auth_token"]
+                )
+                _follow_age_cache[cache_key] = (follow_days, time.time())
+        if follow_days is not None:
+            follow_eligible = follow_days >= min_days
+
+    return {
+        "has_pending_redemption": has_pending,
+        "follow_age_eligible": follow_eligible,
+        "follow_age_days": follow_days,
+        "min_follow_days": min_days,
+        "on_cooldown": on_cooldown,
+    }
+
+
+@app.get("/api/ext/status")
+async def ext_status(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return JSONResponse({"error": "missing_token"}, 401)
+    claims = ext_auth.verify_ext_jwt(auth[7:])
+    if claims is None:
+        return JSONResponse({"error": "identity_required"}, 403)
+    result = await _ext_get_status(claims["user_id"], claims["channel_id"])
+    status = 404 if result.get("error") == "not_configured" else 200
+    return JSONResponse(result, status)
+
+
+@app.post("/api/ext/claim")
+async def ext_claim(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return JSONResponse({"error": "missing_token"}, 401)
+    claims = ext_auth.verify_ext_jwt(auth[7:])
+    if claims is None:
+        return JSONResponse({"error": "identity_required"}, 403)
+
+    if _is_rate_limited(request):
+        return JSONResponse({"error": "rate_limited"}, 429)
+
+    body = await request.json()
+    claim_type = body.get("type")
+
+    config = await db.get_ext_config(claims["channel_id"])
+    if not config:
+        return JSONResponse({"error": "not_configured"}, 404)
+
+    sess_id = config["session_id"]
+    guild_id = config["discord_server_id"]
+    cooldown = config["ext_cooldown_days"] or 30
+
+    if not guild_id:
+        return JSONResponse({"error": "discord_not_configured"}, 400)
+
+    # Unified cooldown check
+    if await db.has_recent_invite(claims["user_id"], sess_id, cooldown):
+        return JSONResponse({"error": "on_cooldown"}, 409)
+
+    if claim_type == "redemption":
+        pending = await db.get_pending_redemptions_for_viewer(claims["user_id"])
+        pending_here = [r for r in pending if r["streamer_session_id"] == sess_id]
+        if not pending_here:
+            return JSONResponse({"error": "no_pending_redemption"}, 404)
+        redemption = pending_here[0]
+        invite_url = await discorddb.create_invite(guild_id)
+        if not invite_url:
+            return JSONResponse({"error": "invite_creation_failed"}, 500)
+        await db.fulfill_redemption(redemption["id"], invite_url)
+        if redemption.get("twitch_reward_id") and redemption.get("twitch_redemption_id"):
+            await twitch.fulfill_redemption(
+                sess_id, redemption["twitch_reward_id"],
+                redemption["twitch_redemption_id"],
+            )
+        return JSONResponse({"invite_url": invite_url})
+
+    elif claim_type == "follow_age":
+        min_days = config["ext_min_follow_days"] or 0
+        user_row = await db.get_user_by_twitch_id(claims["channel_id"])
+        if not user_row or not user_row.get("twitch_auth_token"):
+            return JSONResponse({"error": "streamer_token_missing"}, 500)
+        follow_days = await twitch.get_follow_age(
+            claims["channel_id"], claims["user_id"], user_row["twitch_auth_token"]
+        )
+        if follow_days is None or follow_days < min_days:
+            return JSONResponse({"error": "not_eligible"}, 403)
+        invite_url = await discorddb.create_invite(guild_id)
+        if not invite_url:
+            return JSONResponse({"error": "invite_creation_failed"}, 500)
+        viewer_name = claims.get("opaque_user_id", claims["user_id"])
+        await db.add_ext_claim(sess_id, claims["user_id"], viewer_name, invite_url)
+        return JSONResponse({"invite_url": invite_url})
+
+    return JSONResponse({"error": "invalid_type"}, 400)
+
+
+@app.post("/api/ext/config")
+async def ext_config(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return JSONResponse({"error": "missing_token"}, 401)
+    claims = ext_auth.verify_ext_jwt(auth[7:])
+    if claims is None:
+        return JSONResponse({"error": "identity_required"}, 403)
+    if claims.get("role") != "broadcaster":
+        return JSONResponse({"error": "broadcaster_only"}, 403)
+
+    body = await request.json()
+    min_follow = body.get("min_follow_days")
+    cooldown = body.get("cooldown_days")
+
+    if not isinstance(min_follow, int) or min_follow < 0:
+        return JSONResponse({"error": "invalid_min_follow_days"}, 400)
+    if not isinstance(cooldown, int) or cooldown < 1:
+        return JSONResponse({"error": "invalid_cooldown_days"}, 400)
+
+    user = await db.get_user_by_twitch_id(claims["channel_id"])
+    if not user:
+        return JSONResponse({"error": "user_not_found"}, 404)
+
+    await db.set_ext_config(user["session_id"], min_follow, cooldown)
+    return JSONResponse({"ok": True})
+
+
 ui.run(
     port=8083,
     storage_secret=os.getenv("NICEGUI_STORAGE_SECRET"),
