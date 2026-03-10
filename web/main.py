@@ -74,13 +74,25 @@ class _SecurityHeadersMiddleware:
     def __init__(self, app) -> None:
         self.app = app
 
-    _EXT_CORS_ORIGIN = b"https://extension-files.twitch.tv"
-    _EXT_CORS_HEADERS = [
-        (b"access-control-allow-origin", b"https://extension-files.twitch.tv"),
-        (b"access-control-allow-headers", b"Authorization, Content-Type"),
-        (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
-        (b"access-control-max-age", b"86400"),
-    ]
+    _EXT_CORS_ALLOWED = {
+        b"https://extension-files.twitch.tv",
+        b"https://localhost:8080",
+    }
+
+    @staticmethod
+    def _get_origin(scope) -> bytes | None:
+        for key, val in scope.get("headers", []):
+            if key == b"origin":
+                return val
+        return None
+
+    def _cors_headers(self, origin: bytes) -> list[tuple[bytes, bytes]]:
+        return [
+            (b"access-control-allow-origin", origin),
+            (b"access-control-allow-headers", b"Authorization, Content-Type"),
+            (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
+            (b"access-control-max-age", b"86400"),
+        ]
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
@@ -90,13 +102,15 @@ class _SecurityHeadersMiddleware:
         # CORS preflight for extension routes — respond immediately
         path = scope.get("path", "")
         if path.startswith("/api/ext/") and scope.get("method") == "OPTIONS":
-            await send({
-                "type": "http.response.start",
-                "status": 204,
-                "headers": list(self._EXT_CORS_HEADERS),
-            })
-            await send({"type": "http.response.body", "body": b""})
-            return
+            origin = self._get_origin(scope)
+            if origin in self._EXT_CORS_ALLOWED:
+                await send({
+                    "type": "http.response.start",
+                    "status": 204,
+                    "headers": self._cors_headers(origin),
+                })
+                await send({"type": "http.response.body", "body": b""})
+                return
 
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
@@ -131,10 +145,12 @@ class _SecurityHeadersMiddleware:
                     headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
                 # CORS headers for extension routes
                 if path.startswith("/api/ext/"):
-                    headers["Access-Control-Allow-Origin"] = "https://extension-files.twitch.tv"
-                    headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-                    headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-                    headers["Access-Control-Max-Age"] = "86400"
+                    origin = self._get_origin(scope)
+                    if origin in self._EXT_CORS_ALLOWED:
+                        headers["Access-Control-Allow-Origin"] = origin.decode()
+                        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+                        headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                        headers["Access-Control-Max-Age"] = "86400"
             await send(message)
 
         await self.app(scope, receive, send_with_headers)

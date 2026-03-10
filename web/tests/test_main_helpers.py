@@ -176,7 +176,10 @@ class TestCorsMiddleware:
 
     @pytest.mark.asyncio
     async def test_options_preflight_returns_204(self, middleware):
-        scope = {"type": "http", "method": "OPTIONS", "path": "/api/ext/status"}
+        scope = {
+            "type": "http", "method": "OPTIONS", "path": "/api/ext/status",
+            "headers": [(b"origin", b"https://extension-files.twitch.tv")],
+        }
         responses = []
 
         async def mock_send(msg):
@@ -193,8 +196,31 @@ class TestCorsMiddleware:
         assert b"Authorization" in hdrs[b"access-control-allow-headers"]
 
     @pytest.mark.asyncio
+    async def test_options_preflight_localhost(self, middleware):
+        scope = {
+            "type": "http", "method": "OPTIONS", "path": "/api/ext/status",
+            "headers": [(b"origin", b"https://localhost:8080")],
+        }
+        responses = []
+
+        async def mock_send(msg):
+            responses.append(msg)
+
+        async def mock_receive():
+            return {"type": "http.request", "body": b""}
+
+        await middleware(scope, mock_receive, mock_send)
+
+        assert responses[0]["status"] == 204
+        hdrs = dict(responses[0]["headers"])
+        assert hdrs[b"access-control-allow-origin"] == b"https://localhost:8080"
+
+    @pytest.mark.asyncio
     async def test_get_ext_route_has_cors_headers(self, middleware):
-        scope = {"type": "http", "method": "GET", "path": "/api/ext/status"}
+        scope = {
+            "type": "http", "method": "GET", "path": "/api/ext/status",
+            "headers": [(b"origin", b"https://extension-files.twitch.tv")],
+        }
         responses = []
 
         async def mock_send(msg):
@@ -212,7 +238,31 @@ class TestCorsMiddleware:
 
     @pytest.mark.asyncio
     async def test_non_ext_route_has_no_cors(self, middleware):
-        scope = {"type": "http", "method": "GET", "path": "/streamer"}
+        scope = {
+            "type": "http", "method": "GET", "path": "/streamer",
+            "headers": [(b"origin", b"https://extension-files.twitch.tv")],
+        }
+        responses = []
+
+        async def mock_send(msg):
+            responses.append(msg)
+
+        async def mock_receive():
+            return {"type": "http.request", "body": b""}
+
+        await middleware(scope, mock_receive, mock_send)
+
+        start = responses[0]
+        from starlette.datastructures import MutableHeaders
+        hdrs = MutableHeaders(scope=start)
+        assert hdrs.get("access-control-allow-origin") is None
+
+    @pytest.mark.asyncio
+    async def test_unknown_origin_gets_no_cors(self, middleware):
+        scope = {
+            "type": "http", "method": "GET", "path": "/api/ext/status",
+            "headers": [(b"origin", b"https://evil.com")],
+        }
         responses = []
 
         async def mock_send(msg):
