@@ -18,6 +18,8 @@ def _get_secret() -> bytes | None:
         b64 = os.environ.get("TWITCH_EXT_SECRET")
         if not b64:
             return None
+        # Twitch secrets may lack standard base64 padding
+        b64 += "=" * (-len(b64) % 4)
         _secret_bytes = base64.b64decode(b64)
     return _secret_bytes
 
