@@ -1871,6 +1871,16 @@ async def startup():
         raise RuntimeError("SITE_URL must be set before starting")
     if not _EVENTSUB_SECRET:
         raise RuntimeError("THINVITE_EVENTSUB_SECRET must be set before starting")
+    # Extension env vars (optional — only needed if extension is used)
+    ext_secret = os.environ.get("TWITCH_EXT_SECRET")
+    if ext_secret:
+        assert os.environ.get("TWITCH_EXT_CLIENT_ID"), \
+            "TWITCH_EXT_CLIENT_ID required when TWITCH_EXT_SECRET is set"
+        assert os.environ.get("TWITCH_EXT_OWNER_ID"), \
+            "TWITCH_EXT_OWNER_ID required when TWITCH_EXT_SECRET is set"
+        logger.info("Extension EBS enabled")
+    else:
+        logger.info("Extension EBS disabled (TWITCH_EXT_SECRET not set)")
     await db.init_pool()         # pool must be ready before any DB call
     await bot.recover_subscriptions()
     asyncio.create_task(expiry.start_expiry_loop())

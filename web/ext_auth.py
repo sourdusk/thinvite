@@ -12,18 +12,23 @@ log = logging.getLogger(__name__)
 _secret_bytes: bytes | None = None
 
 
-def _get_secret() -> bytes:
+def _get_secret() -> bytes | None:
     global _secret_bytes
     if _secret_bytes is None:
-        b64 = os.environ["TWITCH_EXT_SECRET"]
+        b64 = os.environ.get("TWITCH_EXT_SECRET")
+        if not b64:
+            return None
         _secret_bytes = base64.b64decode(b64)
     return _secret_bytes
 
 
 def verify_ext_jwt(token: str) -> dict | None:
     """Verify a Twitch Extension JWT. Returns claims dict or None."""
+    secret = _get_secret()
+    if secret is None:
+        return None
     try:
-        claims = jwt.decode(token, _get_secret(), algorithms=["HS256"])
+        claims = jwt.decode(token, secret, algorithms=["HS256"])
     except jwt.exceptions.PyJWTError:
         return None
 
