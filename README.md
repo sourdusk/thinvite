@@ -98,6 +98,7 @@ The initial schema is applied automatically on first run. For existing installat
 docker exec -i thinvite-db mariadb -u thinvite -p"YOUR_DB_PASSWORD" thinvite < db/migrate_001.sql
 docker exec -i thinvite-db mariadb -u thinvite -p"YOUR_DB_PASSWORD" thinvite < db/migrate_002.sql
 docker exec -i thinvite-db mariadb -u thinvite -p"YOUR_DB_PASSWORD" thinvite < db/migrate_003.sql
+docker exec -i thinvite-db mariadb -u thinvite -p"YOUR_DB_PASSWORD" thinvite < db/migrate_004.sql
 ```
 
 ## License
