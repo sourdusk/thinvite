@@ -3,6 +3,7 @@ fastapi==0.135.1
 python-dotenv==1.2.2
 aiomysql==0.3.2
 discord.py==2.7.1
+PyJWT==2.10.1
 
 # test dependencies
 pytest==9.0.2
