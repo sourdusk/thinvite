@@ -724,6 +724,39 @@ async def streamer_page():
                     "Disconnect Discord", color="negative", on_click=disconnect_discord
                 ).props("flat size=sm").classes("q-mt-sm")
 
+    # --- Extension Panel Settings ---
+    if twitch_user_exists and discord_connected and user_record:
+        ui.separator().classes("q-my-lg")
+        with ui.row().classes("window-width row justify-center items-center"):
+            ui.label("Extension Panel Settings").classes("text-h5")
+        with ui.row().classes("window-width row justify-center items-center q-mb-sm"):
+            ui.label(
+                "Configure the Twitch panel extension for follow-age invites."
+            ).classes("text-body2 text-center")
+        with ui.row().classes("window-width row justify-center items-center"):
+            with ui.column().classes("items-center"):
+                min_follow = ui.number(
+                    "Minimum follow age (days)",
+                    value=user_record.get("ext_min_follow_days") or 0,
+                    min=0, step=1,
+                ).props("outlined dense")
+                cooldown_input = ui.number(
+                    "Cooldown between invites (days)",
+                    value=user_record.get("ext_cooldown_days") or 30,
+                    min=1, step=1,
+                ).props("outlined dense")
+
+                async def save_ext_config():
+                    await db.set_ext_config(
+                        _sess_id(), int(min_follow.value), int(cooldown_input.value)
+                    )
+                    ui.notify("Extension settings saved!", type="positive")
+
+                ui.button(
+                    "Save Extension Settings", on_click=save_ext_config,
+                    color="#6441a5",
+                ).classes("q-mt-sm")
+
     # Manual invite + redemption history (only when fully set up)
     if twitch_user_exists and discord_connected:
         ui.separator().classes("q-my-lg")
