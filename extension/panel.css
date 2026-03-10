@@ -1,0 +1,140 @@
+/*
+ * Thinvite — Twitch Panel Extension
+ * Brand-aligned styles for the 318px-wide panel.
+ *
+ * Colors and typography match brand-tokens.css from the main app.
+ * Since extensions are served from Twitch's CDN, tokens are inlined.
+ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.6;
+  padding: 16px;
+  min-height: 100px;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+/* ── Theme: Twitch dark/light ──────────────────────────────────── */
+
+body.dark {
+  background: #12121f;  /* surface */
+  color: #b0afd0;       /* body-text */
+}
+body.light {
+  background: #f5f4ff;
+  color: #2a2940;
+}
+
+/* ── States ────────────────────────────────────────────────────── */
+
+.state {
+  text-align: center;
+  padding: 12px 0;
+}
+.hidden { display: none; }
+
+/* ── Logo mark ─────────────────────────────────────────────────── */
+
+.logo-mark {
+  margin: 0 auto 12px;
+  width: 40px;
+  height: 40px;
+}
+
+/* ── Typography ────────────────────────────────────────────────── */
+
+.section-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: #9d7df5;  /* violet-lt */
+  margin-bottom: 8px;
+}
+
+.body-text {
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+.muted {
+  color: #7070a0;
+}
+body.light .muted { color: #7575a0; }
+
+.success-label { color: #4ecdc4; }
+
+.error-text { color: #f06060; }
+body.light .error-text { color: #d03030; }
+
+/* ── Buttons ───────────────────────────────────────────────────── */
+
+.btn-primary {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 10px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  color: #f0eeff;  /* frost */
+  background: linear-gradient(135deg, #7c5af0 0%, #3d6ef5 100%);
+  box-shadow: 0 4px 18px rgba(124, 90, 240, 0.3);
+  transition: opacity 0.15s;
+}
+.btn-primary:hover { opacity: 0.9; }
+
+.btn-secondary {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 10px 20px;
+  border: 1px solid #7c5af0;
+  border-radius: 10px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  background: transparent;
+  color: #9d7df5;  /* violet-lt */
+  transition: border-color 0.15s;
+}
+.btn-secondary:hover { border-color: #9d7df5; }
+
+body.light .btn-secondary {
+  color: #7c5af0;
+  border-color: #7c5af0;
+}
+
+/* ── Button stack (two claim options) ──────────────────────────── */
+
+.btn-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+/* ── Spinner ───────────────────────────────────────────────────── */
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(124, 90, 240, 0.2);
+  border-top-color: #7c5af0;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 10px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }

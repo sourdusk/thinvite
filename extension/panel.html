@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=318">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap">
+  <link rel="stylesheet" href="panel.css">
+  <script src="https://extension-files.twitch.tv/helper/v1/twitch-ext.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <div id="loading" class="state">
+      <div class="spinner"></div>
+      <p class="body-text">Loading...</p>
+    </div>
+    <div id="identity-required" class="state hidden">
+      <div class="logo-mark">
+        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 256 256" fill="none">
+          <defs><linearGradient id="bg" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#7c5af0"/><stop offset="100%" stop-color="#3d6ef5"/></linearGradient></defs>
+          <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+          <circle cx="81" cy="166" r="46" stroke="white" stroke-width="11" fill="none"/>
+          <circle cx="191" cy="74" r="30" fill="white"/>
+          <line x1="129" y1="125" x2="163" y2="100" stroke="white" stroke-width="11" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <p class="body-text">Share your identity to claim a Discord invite.</p>
+      <button id="share-identity-btn" class="btn-secondary">Share Identity</button>
+    </div>
+    <div id="not-configured" class="state hidden">
+      <p class="body-text muted">Discord invites are not set up for this channel yet.</p>
+    </div>
+    <div id="eligible" class="state hidden">
+      <p class="section-label">Discord Invite</p>
+      <p id="eligible-text" class="body-text"></p>
+      <button id="claim-follow-btn" class="btn-primary">Claim Discord Invite</button>
+    </div>
+    <div id="pending" class="state hidden">
+      <p class="section-label">Channel Points</p>
+      <p class="body-text">You have a pending channel point redemption!</p>
+      <button id="claim-redeem-btn" class="btn-primary">Claim Discord Invite</button>
+    </div>
+    <div id="both-available" class="state hidden">
+      <p class="section-label">Discord Invite</p>
+      <p class="body-text">You can claim a Discord invite:</p>
+      <div class="btn-stack">
+        <button id="claim-follow-btn-2" class="btn-primary">Via Follow Age</button>
+        <button id="claim-redeem-btn-2" class="btn-secondary">Via Channel Points</button>
+      </div>
+    </div>
+    <div id="cooldown" class="state hidden">
+      <p class="section-label">Cooldown</p>
+      <p id="cooldown-text" class="body-text muted"></p>
+    </div>
+    <div id="not-eligible" class="state hidden">
+      <p class="section-label">Discord Invite</p>
+      <p id="not-eligible-text" class="body-text muted"></p>
+    </div>
+    <div id="success" class="state hidden">
+      <p class="section-label success-label">Invite Ready</p>
+      <p class="body-text">Your Discord invite is ready!</p>
+      <a id="invite-link" href="#" target="_blank" class="btn-primary">Join Discord Server</a>
+    </div>
+    <div id="error" class="state hidden">
+      <p id="error-text" class="body-text error-text"></p>
+      <button id="retry-btn" class="btn-secondary">Retry</button>
+    </div>
+  </div>
+  <script src="panel.js"></script>
+</body>
+</html>

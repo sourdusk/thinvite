@@ -1,0 +1,105 @@
+/*
+ * Thinvite — Extension Config Page
+ * Brand-aligned styles for the broadcaster configuration view.
+ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.6;
+  padding: 24px;
+  background: #12121f;  /* surface */
+  color: #b0afd0;       /* body-text */
+}
+
+/* ── Header ────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+.header h2 {
+  font-family: 'Syne', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #f0eeff;  /* frost */
+  letter-spacing: -0.3px;
+}
+
+/* ── Form fields ───────────────────────────────────────────────── */
+
+.field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: #9d7df5;  /* violet-lt */
+  margin-bottom: 6px;
+  margin-top: 16px;
+}
+.field-label:first-of-type { margin-top: 0; }
+
+input[type="number"] {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  background: #1c1c30;  /* surface-2 */
+  color: #f0eeff;       /* frost */
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  transition: border-color 0.15s;
+}
+input[type="number"]:focus {
+  outline: none;
+  border-color: #7c5af0;
+}
+
+/* ── Save button ───────────────────────────────────────────────── */
+
+#save-btn {
+  display: block;
+  width: 100%;
+  margin-top: 24px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 10px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #f0eeff;
+  background: linear-gradient(135deg, #7c5af0 0%, #3d6ef5 100%);
+  box-shadow: 0 4px 18px rgba(124, 90, 240, 0.3);
+  transition: opacity 0.15s;
+}
+#save-btn:hover { opacity: 0.9; }
+
+/* ── Status message ────────────────────────────────────────────── */
+
+#status-msg {
+  margin-top: 8px;
+  font-size: 13px;
+  text-align: center;
+  min-height: 20px;
+}
+
+/* ── Hint ──────────────────────────────────────────────────────── */
+
+.hint {
+  margin-top: 24px;
+  font-size: 12px;
+  color: #7070a0;  /* muted */
+}
+.hint a {
+  color: #9d7df5;
+  text-decoration: none;
+}
+.hint a:hover { text-decoration: underline; }
