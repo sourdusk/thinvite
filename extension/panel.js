@@ -116,30 +116,36 @@
         return;
       }
       var d = res.data;
-      if (d.on_cooldown) {
-        document.getElementById("cooldown-text").textContent =
-          "You claimed an invite recently. Check back later.";
-        showState("cooldown");
-      } else if (d.has_pending_redemption && d.follow_age_eligible) {
+      if (d.has_pending_redemption && d.follow_age_eligible) {
         showState("both-available");
       } else if (d.has_pending_redemption) {
         showState("pending");
+      } else if (d.on_cooldown) {
+        document.getElementById("cooldown-text").textContent =
+          "You claimed an invite recently. Check back later.";
+        showState("cooldown");
       } else if (d.follow_age_eligible) {
         document.getElementById("eligible-text").textContent =
           "You\u2019ve followed for " + formatDuration(d.follow_age_minutes) +
           " \u2014 claim your Discord invite!";
         showState("eligible");
-      } else if (typeof d.follow_age_minutes === "number") {
+      } else if (d.follow_age_enabled && typeof d.follow_age_minutes === "number") {
         var needed = (d.min_follow_minutes || 0) - d.follow_age_minutes;
         document.getElementById("not-eligible-text").textContent = needed > 0
           ? "Follow for " + formatDuration(needed) +
             " more to earn a Discord invite."
           : "Follow this channel to earn a Discord invite.";
         showState("not-eligible");
-      } else {
+      } else if (d.follow_age_enabled) {
         document.getElementById("not-eligible-text").textContent =
           "Follow this channel to earn a Discord invite.";
         showState("not-eligible");
+      } else if (d.cp_enabled) {
+        document.getElementById("not-eligible-text").textContent =
+          "Redeem channel points to earn a Discord invite.";
+        showState("not-eligible");
+      } else {
+        showState("not-configured");
       }
     }).catch(function () {
       document.getElementById("error-text").textContent =

@@ -86,7 +86,7 @@ class _SecurityHeadersMiddleware:
         if origin in cls._EXT_CORS_ALLOWED:
             return True
         # Hosted test: https://<client-id>.ext-twitch.tv
-        return origin.endswith(b".ext-twitch.tv")
+        return origin.startswith(b"https://") and origin.endswith(b".ext-twitch.tv")
 
     @staticmethod
     def _get_origin(scope) -> bytes | None:
@@ -933,6 +933,7 @@ async def streamer_page():
                     "fulfilled_at": _fmt_dt(r["fulfilled_at"]),
                     "invite_url": r["invite_url"] or "—",
                     "can_revoke": not r["revoked_at"] and not r["fulfilled_at"],
+                    "can_delete": bool(r["revoked_at"] or r["fulfilled_at"]),
                 })
             return rows
 
@@ -996,6 +997,11 @@ async def streamer_page():
                 <q-btn v-if="props.row.can_revoke"
                     flat dense color="negative" label="Revoke" size="sm"
                     @click="$parent.$emit('revoke', props.row)" />
+                <q-btn v-if="props.row.can_delete"
+                    flat dense color="grey" icon="delete" size="sm"
+                    @click="$parent.$emit('delete_row', props.row)">
+                    <q-tooltip>Delete from history</q-tooltip>
+                </q-btn>
             </q-td>
         """)
         redemptions_table.add_slot("body-cell-invite_url", """
@@ -1039,6 +1045,24 @@ async def streamer_page():
             load_more_btn.set_visibility(len(new_rows) == _page_limit)
 
         redemptions_table.on("revoke", handle_revoke)
+
+        async def handle_delete(e):
+            rid = e.args.get("id")
+            if not sanitize.is_positive_int(rid):
+                ui.notify("Invalid request.", type="negative")
+                return
+            ok = await db.delete_redemption(int(rid), _current_sess)
+            if not ok:
+                ui.notify("Cannot delete a pending redemption.", type="warning")
+                return
+            ui.notify("Deleted.", type="positive")
+            new_rows = await _load_rows(_current_sess)
+            redemptions_table.rows = new_rows
+            redemptions_table.update()
+            _refresh_stats(new_rows)
+            load_more_btn.set_visibility(len(new_rows) == _page_limit)
+
+        redemptions_table.on("delete_row", handle_delete)
 
         # "Load more" — visible only when the table is at its current limit,
         # indicating additional rows may exist in the DB.
@@ -2105,22 +2129,30 @@ async def _ext_get_status(user_id: str, channel_id: str) -> dict:
     if not config:
         return {"error": "not_configured"}
 
+    follow_age_enabled = config["ext_min_follow_minutes"] is not None
+    cp_enabled = config["twitch_redeem_id"] is not None
+
+    if not follow_age_enabled and not cp_enabled:
+        return {"error": "not_configured"}
+
     sess_id = config["session_id"]
     min_minutes = config["ext_min_follow_minutes"] or 0
     cooldown = config["ext_cooldown_days"] or 30
 
-    # Check pending channel-point redemptions for this streamer
+    # Check pending redemptions (channel points or manual) for this streamer
     pending = await db.get_pending_redemptions_for_viewer(user_id)
     pending_here = [r for r in pending if r["streamer_session_id"] == sess_id]
     has_pending = len(pending_here) > 0
 
-    # Check cooldown
-    on_cooldown = await db.has_recent_invite(user_id, sess_id, cooldown)
+    # Check cooldown (only relevant for follow-age claims)
+    on_cooldown = False
+    if follow_age_enabled:
+        on_cooldown = await db.has_recent_invite(user_id, sess_id, cooldown)
 
-    # Check follow age (cached, in minutes)
+    # Check follow age (cached, in minutes) — only if follow-age invites enabled
     follow_minutes = None
     follow_eligible = False
-    if not on_cooldown:
+    if follow_age_enabled and not on_cooldown:
         cache_key = f"{channel_id}:{user_id}"
         cached = _follow_age_cache.get(cache_key)
         if cached and (time.time() - cached[1]) < _FOLLOW_AGE_CACHE_TTL:
@@ -2137,9 +2169,11 @@ async def _ext_get_status(user_id: str, channel_id: str) -> dict:
 
     return {
         "has_pending_redemption": has_pending,
+        "follow_age_enabled": follow_age_enabled,
         "follow_age_eligible": follow_eligible,
         "follow_age_minutes": follow_minutes,
         "min_follow_minutes": min_minutes,
+        "cp_enabled": cp_enabled,
         "on_cooldown": on_cooldown,
     }
 
@@ -2178,16 +2212,18 @@ async def ext_claim(request: Request):
     if not config:
         return JSONResponse({"error": "not_configured"}, 404)
 
+    follow_age_enabled = config["ext_min_follow_minutes"] is not None
+    cp_enabled = config["twitch_redeem_id"] is not None
+
+    if not follow_age_enabled and not cp_enabled:
+        return JSONResponse({"error": "not_configured"}, 404)
+
     sess_id = config["session_id"]
     guild_id = config["discord_server_id"]
     cooldown = config["ext_cooldown_days"] or 30
 
     if not guild_id:
         return JSONResponse({"error": "discord_not_configured"}, 400)
-
-    # Unified cooldown check
-    if await db.has_recent_invite(claims["user_id"], sess_id, cooldown):
-        return JSONResponse({"error": "on_cooldown"}, 409)
 
     if claim_type == "redemption":
         pending = await db.get_pending_redemptions_for_viewer(claims["user_id"])
@@ -2207,6 +2243,10 @@ async def ext_claim(request: Request):
         return JSONResponse({"invite_url": invite_url})
 
     elif claim_type == "follow_age":
+        if not follow_age_enabled:
+            return JSONResponse({"error": "not_eligible"}, 403)
+        if await db.has_recent_invite(claims["user_id"], sess_id, cooldown):
+            return JSONResponse({"error": "on_cooldown"}, 409)
         min_minutes = config["ext_min_follow_minutes"] or 0
         user_row = await db.get_user_by_twitch_id(claims["channel_id"])
         if not user_row or not user_row.get("twitch_auth_token"):

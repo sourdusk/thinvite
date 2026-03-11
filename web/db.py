@@ -288,6 +288,23 @@ async def revoke_redemption(redemption_id: int, streamer_sess_id: str) -> bool:
             return cur.rowcount == 1
 
 
+async def delete_redemption(redemption_id: int, streamer_sess_id: str) -> bool:
+    """Delete a non-pending redemption owned by *streamer_sess_id*.
+
+    Only deletes rows that are already fulfilled, revoked, or expired.
+    Returns True if deleted, False otherwise.
+    """
+    async with _acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM redemptions "
+                "WHERE id = %s AND streamer_session_id = %s "
+                "AND (revoked_at IS NOT NULL OR fulfilled_at IS NOT NULL)",
+                (redemption_id, streamer_sess_id),
+            )
+            return cur.rowcount == 1
+
+
 async def revoke_all_pending_redemptions(streamer_sess_id: str) -> list:
     """Revoke all pending (unfulfilled, unrevoked) redemptions for *streamer_sess_id*.
 
@@ -495,7 +512,8 @@ async def get_ext_config(streamer_twitch_id: str) -> dict | None:
     async with _acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                "SELECT session_id, discord_server_id, ext_min_follow_minutes, ext_cooldown_days "
+                "SELECT session_id, discord_server_id, twitch_redeem_id, "
+                "ext_min_follow_minutes, ext_cooldown_days "
                 "FROM users WHERE twitch_user_id = %s",
                 (streamer_twitch_id,),
             )
