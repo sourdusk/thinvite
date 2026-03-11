@@ -79,6 +79,15 @@ class _SecurityHeadersMiddleware:
         b"https://localhost:8080",
     }
 
+    @classmethod
+    def _is_ext_origin(cls, origin: bytes | None) -> bool:
+        if origin is None:
+            return False
+        if origin in cls._EXT_CORS_ALLOWED:
+            return True
+        # Hosted test: https://<client-id>.ext-twitch.tv
+        return origin.endswith(b".ext-twitch.tv")
+
     @staticmethod
     def _get_origin(scope) -> bytes | None:
         for key, val in scope.get("headers", []):
@@ -103,7 +112,7 @@ class _SecurityHeadersMiddleware:
         path = scope.get("path", "")
         if path.startswith("/api/ext/") and scope.get("method") == "OPTIONS":
             origin = self._get_origin(scope)
-            if origin in self._EXT_CORS_ALLOWED:
+            if self._is_ext_origin(origin):
                 await send({
                     "type": "http.response.start",
                     "status": 204,
@@ -146,7 +155,7 @@ class _SecurityHeadersMiddleware:
                 # CORS headers for extension routes
                 if path.startswith("/api/ext/"):
                     origin = self._get_origin(scope)
-                    if origin in self._EXT_CORS_ALLOWED:
+                    if self._is_ext_origin(origin):
                         headers["Access-Control-Allow-Origin"] = origin.decode()
                         headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
                         headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"

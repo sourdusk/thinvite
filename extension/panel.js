@@ -41,13 +41,14 @@
     token = auth.token;
     channelId = auth.channelId;
 
-    if (!auth.userId || !/^\d+$/.test(auth.userId)) {
-      // Opaque / anonymous user — needs to share identity
+    var viewer = Twitch.ext.viewer;
+    if (!viewer.id) {
+      // Viewer hasn't shared identity — prompt them
       showState("identity-required");
       return;
     }
 
-    userId = auth.userId;
+    userId = viewer.id;
     registerPubSub(userId);
     checkStatus();
   });
