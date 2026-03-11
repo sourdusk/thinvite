@@ -38,7 +38,8 @@ _TIMEOUT = aiohttp.ClientTimeout(total=10)
 # chat:read / chat:edit / channel:bot were only needed for the IRC-based bot
 # and are no longer required now that we use the Helix chat messages endpoint.
 _STREAMER_SCOPE = (
-    "channel:read:redemptions channel:manage:redemptions user:write:chat"
+    "channel:read:redemptions channel:manage:redemptions "
+    "user:write:chat moderator:read:followers"
 )
 
 # ---------------------------------------------------------------------------
@@ -290,6 +291,25 @@ async def get_user_info(token: str) -> dict:
             return None
 
 
+async def get_user_by_id(user_id: str, token: str) -> dict | None:
+    """Fetch a Twitch user by their numeric ID. Returns user dict or None."""
+    async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
+        headers={
+            "Client-Id": os.getenv("THINVITE_TWITCH_ID"),
+            "Authorization": f"Bearer {token}",
+        },
+    ) as session:
+        async with session.get(
+            "https://api.twitch.tv/helix/users", params={"id": user_id},
+        ) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            users = data.get("data", [])
+            return users[0] if users else None
+
+
 async def get_channel_redeems(sess_id: str) -> list | None:
     """Return the full list of custom reward objects, or None on error.
 
@@ -389,8 +409,8 @@ async def user_exists(sess_id: str) -> bool:
     return res is not None and res.get("twitch_user_id") is not None
 
 
-async def update_twitch_redeem(sess_id: str, redeem_id: str) -> bool:
-    if not sanitize.is_valid_uuid(redeem_id):
+async def update_twitch_redeem(sess_id: str, redeem_id: str | None) -> bool:
+    if redeem_id is not None and not sanitize.is_valid_uuid(redeem_id):
         return False
 
     async with db._acquire() as conn:
@@ -588,3 +608,60 @@ async def fulfill_redemption(
                 )
                 return False
             return True
+
+
+# ---------------------------------------------------------------------------
+# Follow-age check (for extension panel)
+# ---------------------------------------------------------------------------
+
+async def get_follow_age(broadcaster_id: str, user_id: str, token: str) -> int | None:
+    """Get how many minutes user_id has followed broadcaster_id.
+
+    Returns minutes as int, or None if not following.
+    Retries once with a refreshed token on 401.
+    """
+    from datetime import datetime, timezone
+
+    url = (
+        f"https://api.twitch.tv/helix/channels/followers"
+        f"?broadcaster_id={broadcaster_id}&user_id={user_id}"
+    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Client-Id": os.environ["THINVITE_TWITCH_ID"],
+    }
+
+    async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+        async with session.get(url, headers=headers) as resp:
+            if resp.status == 401:
+                # Token expired — try to refresh and retry
+                user = await db.get_user_by_twitch_id(broadcaster_id)
+                if not user or not user.get("twitch_token_refresh_code"):
+                    return None
+                refreshed = await refresh_auth_token(user["twitch_token_refresh_code"])
+                if not refreshed:
+                    return None
+                new_token = refreshed["access_token"]
+                await db.update_twitch_auth_token(
+                    user["session_id"], new_token,
+                    refreshed["expires_in"] + int(time.time()),
+                    refreshed["refresh_token"],
+                )
+                headers["Authorization"] = f"Bearer {new_token}"
+                async with session.get(url, headers=headers) as retry_resp:
+                    if retry_resp.status != 200:
+                        return None
+                    data = await retry_resp.json()
+            elif resp.status != 200:
+                logger.warning("get_follow_age failed: %s", resp.status)
+                return None
+            else:
+                data = await resp.json()
+
+    follows = data.get("data", [])
+    if not follows:
+        return None
+
+    followed_at = datetime.fromisoformat(follows[0]["followed_at"].replace("Z", "+00:00"))
+    now = datetime.now(timezone.utc)
+    return int((now - followed_at).total_seconds() // 60)

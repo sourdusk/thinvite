@@ -126,11 +126,13 @@ async def test_handle_event_adds_redemption_and_sends_chat():
             "id": "rid1", "reward": {"id": "rw1"},
         }
     }
-    with patch("main.db.get_user_by_twitch_id", AsyncMock(return_value=user)):
-        with patch("main.db.has_pending_redemption", AsyncMock(return_value=False)):
-            with patch("main.db.add_redemption", AsyncMock()) as mock_add:
-                with patch("main.twitch.send_chat_message", AsyncMock(return_value=True)) as mock_chat:
-                    await main._handle_eventsub_event(payload)
+    with patch("main.db.get_user_by_twitch_id", AsyncMock(return_value=user)), \
+         patch("main.db.has_pending_redemption", AsyncMock(return_value=False)), \
+         patch("main.db.has_recent_invite", AsyncMock(return_value=False)), \
+         patch("main.db.add_redemption", AsyncMock()) as mock_add, \
+         patch("main.twitch.send_chat_message", AsyncMock(return_value=True)) as mock_chat, \
+         patch("main.ext_pubsub.send_whisper", AsyncMock()):
+        await main._handle_eventsub_event(payload)
 
     mock_add.assert_called_once_with("s1", "v1", "viewer1", "rid1", "rw1")
     mock_chat.assert_called_once()
@@ -157,6 +159,34 @@ async def test_handle_event_duplicate_cancels_redemption():
 
     mock_cancel.assert_called_once_with("b1", "rw1", "rid1", "tok")
     mock_add.assert_not_called()
+
+
+async def test_handle_event_recent_invite_cancels_redemption():
+    """If viewer has a recent invite (from follow-age or prior claim), cancel."""
+    user = {
+        "session_id": "s1", "twitch_user_id": "b1",
+        "twitch_auth_token": "tok", "twitch_redeem_id": "rw1",
+        "ext_cooldown_days": 30,
+    }
+    payload = {
+        "event": {
+            "broadcaster_user_id": "b1",
+            "user_id": "v1", "user_name": "viewer1",
+            "id": "rid1", "reward": {"id": "rw1"},
+        }
+    }
+    with patch("main.db.get_user_by_twitch_id", AsyncMock(return_value=user)), \
+         patch("main.db.has_pending_redemption", AsyncMock(return_value=False)), \
+         patch("main.db.has_recent_invite", AsyncMock(return_value=True)), \
+         patch("main.twitch.cancel_redemption", AsyncMock(return_value=True)) as mock_cancel, \
+         patch("main.twitch.send_chat_message", AsyncMock(return_value=True)) as mock_chat, \
+         patch("main.db.add_redemption", AsyncMock()) as mock_add:
+        await main._handle_eventsub_event(payload)
+
+    mock_cancel.assert_called_once_with("b1", "rw1", "rid1", "tok")
+    mock_add.assert_not_called()
+    mock_chat.assert_called_once()
+    assert "recent invite" in mock_chat.call_args[0][2]
 
 
 # ---------------------------------------------------------------------------

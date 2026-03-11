@@ -145,7 +145,7 @@ async def update_twitch_user_info(sess_id: str, username: str, user_id: str) -> 
             return True
 
 
-async def update_twitch_redeem(sess_id: str, redeem_id: str) -> None:
+async def update_twitch_redeem(sess_id: str, redeem_id: str | None) -> None:
     async with _acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
@@ -468,6 +468,72 @@ async def expire_redemption(redemption_id: int) -> None:
                 "WHERE id = %s",
                 (redemption_id,),
             )
+
+
+# ---------------------------------------------------------------------------
+# Extension helpers
+# ---------------------------------------------------------------------------
+
+async def set_ext_config(
+    session_id: str, min_follow_minutes: int | None, cooldown_days: int | None,
+) -> None:
+    """Set extension config (min follow age in minutes, cooldown) for a streamer.
+
+    Pass None for both to disable follow-age invites.
+    """
+    async with _acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET ext_min_follow_minutes = %s, ext_cooldown_days = %s "
+                "WHERE session_id = %s",
+                (min_follow_minutes, cooldown_days, session_id),
+            )
+
+
+async def get_ext_config(streamer_twitch_id: str) -> dict | None:
+    """Get extension config + discord_server_id for a streamer by their Twitch ID."""
+    async with _acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT session_id, discord_server_id, ext_min_follow_minutes, ext_cooldown_days "
+                "FROM users WHERE twitch_user_id = %s",
+                (streamer_twitch_id,),
+            )
+            return await cur.fetchone()
+
+
+async def has_recent_invite(viewer_twitch_id: str, streamer_session_id: str, cooldown_days: int) -> bool:
+    """Check if viewer has any invite (any source) within the cooldown window."""
+    async with _acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT COUNT(*) AS cnt FROM redemptions "
+                "WHERE viewer_twitch_user_id = %s AND streamer_session_id = %s "
+                "AND redeemed_at > NOW() - INTERVAL %s DAY "
+                "AND (fulfilled_at IS NOT NULL OR revoked_at IS NULL)",
+                (viewer_twitch_id, streamer_session_id, cooldown_days),
+            )
+            row = await cur.fetchone()
+            return row["cnt"] > 0
+
+
+async def add_ext_claim(
+    streamer_session_id: str,
+    viewer_twitch_id: str,
+    viewer_twitch_name: str,
+    invite_url: str,
+) -> int:
+    """Insert a follow-age invite claim into redemptions."""
+    async with _acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO redemptions "
+                "(streamer_session_id, viewer_twitch_user_id, viewer_twitch_user_name, "
+                "invite_url, source, fulfilled_at) "
+                "VALUES (%s, %s, %s, %s, %s, NOW())",
+                (streamer_session_id, viewer_twitch_id, viewer_twitch_name, invite_url, "follow_age"),
+            )
+            return cur.lastrowid
 
 
 async def cleanup_stale_sessions() -> int:

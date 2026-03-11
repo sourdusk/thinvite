@@ -574,3 +574,58 @@ async def test_send_chat_message_failure_returns_false():
     with patch("aiohttp.ClientSession", return_value=sess):
         result = await twitch.send_chat_message("b1", "b1", "Hello!", "token")
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# get_follow_age
+# ---------------------------------------------------------------------------
+async def test_get_follow_age_success():
+    follow_data = {"data": [{"followed_at": "2025-06-15T12:00:00Z"}]}
+    resp = make_aiohttp_response(follow_data)
+    sess = make_aiohttp_session(get_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        days = await twitch.get_follow_age("broadcaster-1", "viewer-1", "tok123")
+    assert isinstance(days, int)
+    assert days > 0
+
+
+async def test_get_follow_age_not_following():
+    resp = make_aiohttp_response({"data": []})
+    sess = make_aiohttp_session(get_resp=resp)
+    with patch("aiohttp.ClientSession", return_value=sess):
+        days = await twitch.get_follow_age("broadcaster-1", "viewer-1", "tok123")
+    assert days is None
+
+
+async def test_get_follow_age_retries_on_401(mock_pool_factory):
+    mock_pool_factory(fetchone={
+        "session_id": "sess-1",
+        "twitch_token_refresh_code": "ref123",
+        "twitch_auth_token": "new-tok",
+    }, rowcount=1)
+    # First GET returns 401, then refresh POST succeeds, then retry GET succeeds
+    resp_401 = make_aiohttp_response({}, status=401)
+    refresh_resp = make_aiohttp_response({
+        "access_token": "new-tok", "refresh_token": "new-ref",
+        "expires_in": 14400, "token_type": "bearer",
+    })
+    follow_data = {"data": [{"followed_at": "2025-01-01T00:00:00Z"}]}
+    resp_ok = make_aiohttp_response(follow_data)
+
+    # Build a session mock that returns 401 on first GET, ok on second
+    call_count = {"get": 0}
+
+    def get_side_effect(*args, **kwargs):
+        call_count["get"] += 1
+        return resp_401 if call_count["get"] == 1 else resp_ok
+
+    sess = MagicMock()
+    sess.__aenter__ = AsyncMock(return_value=sess)
+    sess.__aexit__ = AsyncMock(return_value=False)
+    sess.get = MagicMock(side_effect=get_side_effect)
+    sess.post = MagicMock(return_value=refresh_resp)
+
+    with patch("aiohttp.ClientSession", return_value=sess):
+        days = await twitch.get_follow_age("broadcaster-1", "viewer-1", "tok123")
+    assert isinstance(days, int)
+    assert days > 0

@@ -136,6 +136,14 @@ async def refresh_expiring_tokens() -> None:
 # Task: prune orphaned and duplicate user rows
 # ---------------------------------------------------------------------------
 
+async def sweep_follow_age_cache() -> None:
+    """Evict expired entries from the extension follow-age cache."""
+    import main as main_module  # lazy to avoid circular import
+    removed = main_module.sweep_follow_age_cache()
+    if removed:
+        logger.info(f"Evicted {removed} stale follow-age cache entries")
+
+
 async def cleanup_stale_sessions() -> None:
     """Remove empty browser sessions and consolidate duplicate Twitch accounts.
 
@@ -159,6 +167,7 @@ async def cleanup_stale_sessions() -> None:
 _SCHEDULE = [
     {"name": "expire_old_redemptions",   "interval": 5 * 60,      "fn": expire_old_redemptions},
     {"name": "refresh_expiring_tokens",  "interval": 30 * 60,     "fn": refresh_expiring_tokens},
+    {"name": "sweep_follow_age_cache",   "interval": 10 * 60,     "fn": sweep_follow_age_cache},
     {"name": "cleanup_stale_sessions",   "interval": 6 * 60 * 60, "fn": cleanup_stale_sessions},
 ]
 

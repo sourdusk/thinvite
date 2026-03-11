@@ -98,7 +98,24 @@ The initial schema is applied automatically on first run. For existing installat
 docker exec -i thinvite-db mariadb -u thinvite -p"YOUR_DB_PASSWORD" thinvite < db/migrate_001.sql
 docker exec -i thinvite-db mariadb -u thinvite -p"YOUR_DB_PASSWORD" thinvite < db/migrate_002.sql
 docker exec -i thinvite-db mariadb -u thinvite -p"YOUR_DB_PASSWORD" thinvite < db/migrate_003.sql
+docker exec -i thinvite-db mariadb -u thinvite -p"YOUR_DB_PASSWORD" thinvite < db/migrate_004.sql
 ```
+
+## Twitch Panel Extension
+
+The `extension/` directory contains a Twitch panel extension that lets viewers claim Discord invites directly from a streamer's channel page. Two claim paths are supported:
+
+- **Follow-age**: viewers who have followed for a configurable number of days
+- **Channel points**: viewers with a pending channel-point redemption
+
+The extension frontend (HTML/CSS/JS) is served from Twitch's CDN. It communicates with the EBS endpoints (`/api/ext/status`, `/api/ext/claim`, `/api/ext/config`) on this server.
+
+**Optional env vars** (only needed if the extension is used):
+- `TWITCH_EXT_SECRET` — base64-encoded extension shared secret
+- `TWITCH_EXT_CLIENT_ID` — extension client ID
+- `TWITCH_EXT_OWNER_ID` — extension owner's Twitch user ID
+
+Replace `%%EBS_URL%%` and `%%SITE_URL%%` placeholders in the extension JS/HTML files before uploading to Twitch.
 
 ## License
 

@@ -49,6 +49,7 @@ import bot
 import captcha
 import discorddb
 import expiry
+import ext_pubsub
 import mail
 import twitch
 import db
@@ -73,10 +74,43 @@ class _SecurityHeadersMiddleware:
     def __init__(self, app) -> None:
         self.app = app
 
+    _EXT_CORS_ALLOWED = {
+        b"https://extension-files.twitch.tv",
+        b"https://localhost:8080",
+    }
+
+    @staticmethod
+    def _get_origin(scope) -> bytes | None:
+        for key, val in scope.get("headers", []):
+            if key == b"origin":
+                return val
+        return None
+
+    def _cors_headers(self, origin: bytes) -> list[tuple[bytes, bytes]]:
+        return [
+            (b"access-control-allow-origin", origin),
+            (b"access-control-allow-headers", b"Authorization, Content-Type"),
+            (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
+            (b"access-control-max-age", b"86400"),
+        ]
+
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        # CORS preflight for extension routes — respond immediately
+        path = scope.get("path", "")
+        if path.startswith("/api/ext/") and scope.get("method") == "OPTIONS":
+            origin = self._get_origin(scope)
+            if origin in self._EXT_CORS_ALLOWED:
+                await send({
+                    "type": "http.response.start",
+                    "status": 204,
+                    "headers": self._cors_headers(origin),
+                })
+                await send({"type": "http.response.body", "body": b""})
+                return
 
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
@@ -109,6 +143,14 @@ class _SecurityHeadersMiddleware:
                 )
                 if not is_static:
                     headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                # CORS headers for extension routes
+                if path.startswith("/api/ext/"):
+                    origin = self._get_origin(scope)
+                    if origin in self._EXT_CORS_ALLOWED:
+                        headers["Access-Control-Allow-Origin"] = origin.decode()
+                        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+                        headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                        headers["Access-Control-Max-Age"] = "86400"
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
@@ -583,71 +625,6 @@ async def streamer_page():
                 ui.button(
                     "Disconnect Twitch", color="negative", on_click=disconnect_twitch
                 ).props("flat size=sm").classes("q-mt-sm")
-
-                redeems_raw = await twitch.get_channel_redeems(_sess_id())
-
-                if redeems_raw is None:
-                    ui.label(
-                        "Could not load channel point redeems. Please refresh the page."
-                    ).classes("text-body2 text-center text-negative")
-                else:
-                    redeems = {r["id"]: r["title"] for r in redeems_raw}
-                    redeems_full = {r["id"]: r for r in redeems_raw}
-                    current_redeem = await twitch.get_set_redeem(_sess_id())
-                    if current_redeem is None and redeems:
-                        current_redeem = (
-                            next((rid for rid, title in redeems.items() if "discord" in title.lower()), None)
-                            or next((rid for rid, title in redeems.items() if "server" in title.lower()), None)
-                            or next(iter(redeems))
-                        )
-                        await twitch.update_twitch_redeem(_sess_id(), current_redeem)
-                    ui.label("Select the channel point redeem").classes("text-body2 text-center")
-                    ui.label("viewers must use to receive a Discord invite:").classes("text-body2 text-center")
-                    sel = ui.select(redeems, value=current_redeem).classes("fit-width")
-
-                    async def update_redeem():
-                        new_id = sel.value
-                        if new_id == current_redeem:
-                            ui.notify("That redeem is already selected.", type="info")
-                            return
-
-                        reward = redeems_full.get(new_id, {})
-                        skips_queue = reward.get("should_redemptions_skip_request_queue", False)
-
-                        async def _apply_update():
-                            # Always disable skip_request_queue so redemptions
-                            # stay in the queue where Thinvite can manage them.
-                            await twitch.update_reward_queue_setting(
-                                _sess_id(), new_id, False
-                            )
-                            ok = await twitch.update_twitch_redeem(_sess_id(), new_id)
-                            if ok:
-                                ui.notify("Redeem updated!", type="positive")
-                                ui.navigate.to("/streamer")
-                            else:
-                                ui.notify("Failed to update redeem.", type="negative")
-
-                        if skips_queue:
-                            with ui.dialog() as skip_dlg, ui.card().classes("q-pa-md"):
-                                ui.label("Queue setting conflict").classes("text-h6")
-                                ui.label(
-                                    "This redeem currently skips the request queue. "
-                                    "Thinvite needs 'Skip Request Queue' set to Off so "
-                                    "it can manage redemptions. Proceed and change it?"
-                                ).classes("q-mt-sm text-body2")
-                                with ui.row().classes("justify-end q-mt-lg gap-sm"):
-                                    ui.button("Cancel", on_click=skip_dlg.close).props("flat")
-
-                                    async def _confirm_queue():
-                                        skip_dlg.close()
-                                        await _apply_update()
-
-                                    ui.button("Proceed", on_click=_confirm_queue, color="primary")
-                            skip_dlg.open()
-                        else:
-                            await _apply_update()
-
-                    ui.button(color="#6441a5", text="Submit", on_click=update_redeem)
         else:
             with ui.column().classes("items-center"):
                 with ui.button(color="#6441a5", on_click=twitch_login).style(
@@ -697,6 +674,171 @@ async def streamer_page():
                 ui.button(
                     "Disconnect Discord", color="negative", on_click=disconnect_discord
                 ).props("flat size=sm").classes("q-mt-sm")
+
+    # --- Invite Settings (channel points + follow-age toggles) ---
+    if twitch_user_exists and discord_connected and user_record:
+        ui.separator().classes("q-my-lg")
+        with ui.row().classes("window-width row justify-center items-center"):
+            ui.label("Invite Settings").classes("text-h5")
+
+        # -- Channel Point Redeems toggle --
+        current_redeem = await twitch.get_set_redeem(_sess_id())
+        cp_enabled = current_redeem is not None
+
+        with ui.row().classes("window-width row justify-center items-center q-mt-md"):
+            with ui.column().classes("items-center").style("max-width: 400px; width: 100%"):
+                cp_toggle = ui.switch(
+                    "Channel Point Redeems", value=cp_enabled,
+                ).classes("q-mb-sm")
+
+                cp_container = ui.column().classes("items-center full-width")
+                cp_container.set_visibility(cp_enabled)
+
+                with cp_container:
+                    redeems_raw = await twitch.get_channel_redeems(_sess_id())
+                    if redeems_raw is None:
+                        ui.label(
+                            "Could not load channel point redeems. Please refresh."
+                        ).classes("text-body2 text-center text-negative")
+                    else:
+                        redeems = {r["id"]: r["title"] for r in redeems_raw}
+                        redeems_full = {r["id"]: r for r in redeems_raw}
+                        ui.label(
+                            "Select the channel point redeem viewers must use:"
+                        ).classes("text-body2 text-center")
+                        sel = ui.select(redeems, value=current_redeem).classes("fit-width")
+
+                        async def update_redeem():
+                            new_id = sel.value
+                            if new_id == current_redeem:
+                                ui.notify("That redeem is already selected.", type="info")
+                                return
+
+                            reward = redeems_full.get(new_id, {})
+                            skips_queue = reward.get(
+                                "should_redemptions_skip_request_queue", False
+                            )
+
+                            async def _apply_update():
+                                await twitch.update_reward_queue_setting(
+                                    _sess_id(), new_id, False
+                                )
+                                ok = await twitch.update_twitch_redeem(_sess_id(), new_id)
+                                if ok:
+                                    ui.notify("Redeem updated!", type="positive")
+                                    ui.navigate.to("/streamer")
+                                else:
+                                    ui.notify("Failed to update redeem.", type="negative")
+
+                            if skips_queue:
+                                with ui.dialog() as skip_dlg, ui.card().classes("q-pa-md"):
+                                    ui.label("Queue setting conflict").classes("text-h6")
+                                    ui.label(
+                                        "This redeem currently skips the request queue. "
+                                        "Thinvite needs 'Skip Request Queue' set to Off "
+                                        "so it can manage redemptions. Proceed?"
+                                    ).classes("q-mt-sm text-body2")
+                                    with ui.row().classes("justify-end q-mt-lg gap-sm"):
+                                        ui.button(
+                                            "Cancel", on_click=skip_dlg.close
+                                        ).props("flat")
+
+                                        async def _confirm_queue():
+                                            skip_dlg.close()
+                                            await _apply_update()
+
+                                        ui.button(
+                                            "Proceed", on_click=_confirm_queue,
+                                            color="primary",
+                                        )
+                                skip_dlg.open()
+                            else:
+                                await _apply_update()
+
+                        ui.button(
+                            color="#6441a5", text="Save Redeem", on_click=update_redeem,
+                        )
+
+                async def _toggle_cp(e):
+                    if e.value:
+                        cp_container.set_visibility(True)
+                        # Re-subscribe to EventSub so we receive redemption events
+                        u = await db.get_user_by_session_id(_sess_id())
+                        if u and u.get("discord_server_id"):
+                            asyncio.create_task(bot.subscribe(u))
+                    else:
+                        await twitch.update_twitch_redeem(_sess_id(), None)
+                        await bot.unsubscribe(_sess_id())
+                        cp_container.set_visibility(False)
+                        ui.notify("Channel point redeems disabled.", type="info")
+
+                cp_toggle.on_value_change(_toggle_cp)
+
+        # -- Follow Age Invites toggle --
+        fa_enabled = user_record.get("ext_min_follow_minutes") is not None
+
+        with ui.row().classes("window-width row justify-center items-center q-mt-lg"):
+            with ui.column().classes("items-center").style("max-width: 400px; width: 100%"):
+                fa_toggle = ui.switch(
+                    "Follow Age Invites (Extension Panel)", value=fa_enabled,
+                ).classes("q-mb-sm")
+
+                fa_container = ui.column().classes("items-center full-width")
+                fa_container.set_visibility(fa_enabled)
+
+                with fa_container:
+                    # Convert stored minutes to a friendly display value
+                    _stored_min = user_record.get("ext_min_follow_minutes") or 0
+                    if _stored_min >= 1440 and _stored_min % 1440 == 0:
+                        _display_val, _display_unit = _stored_min // 1440, "days"
+                    elif _stored_min >= 60 and _stored_min % 60 == 0:
+                        _display_val, _display_unit = _stored_min // 60, "hours"
+                    else:
+                        _display_val, _display_unit = _stored_min, "minutes"
+
+                    with ui.row().classes("items-end gap-sm"):
+                        min_follow = ui.number(
+                            "Minimum follow age",
+                            value=_display_val,
+                            min=0, step=1,
+                        ).props("outlined dense").style("width: 160px")
+                        min_follow_unit = ui.select(
+                            {"minutes": "minutes", "hours": "hours", "days": "days"},
+                            value=_display_unit,
+                        ).props("outlined dense").style("width: 120px")
+
+                    cooldown_input = ui.number(
+                        "Cooldown between invites (days)",
+                        value=user_record.get("ext_cooldown_days") or 30,
+                        min=1, step=1,
+                    ).props("outlined dense")
+
+                    async def save_ext_config():
+                        val = int(min_follow.value)
+                        unit = min_follow_unit.value
+                        if unit == "hours":
+                            val *= 60
+                        elif unit == "days":
+                            val *= 1440
+                        await db.set_ext_config(
+                            _sess_id(), val, int(cooldown_input.value),
+                        )
+                        ui.notify("Extension settings saved!", type="positive")
+
+                    ui.button(
+                        "Save Extension Settings", on_click=save_ext_config,
+                        color="#6441a5",
+                    ).classes("q-mt-sm")
+
+                async def _toggle_fa(e):
+                    if e.value:
+                        fa_container.set_visibility(True)
+                    else:
+                        await db.set_ext_config(_sess_id(), None, None)
+                        fa_container.set_visibility(False)
+                        ui.notify("Follow age invites disabled.", type="info")
+
+                fa_toggle.on_value_change(_toggle_fa)
 
     # Manual invite + redemption history (only when fully set up)
     if twitch_user_exists and discord_connected:
@@ -1749,8 +1891,30 @@ async def _handle_eventsub_event(payload: dict) -> None:
         )
         return
 
+    # Unified cooldown — cancel if viewer already has a recent invite
+    # (covers follow-age claims too)
+    cooldown_days = user.get("ext_cooldown_days") or 30
+    if await db.has_recent_invite(viewer_id, sess_id, cooldown_days):
+        logger.info("Viewer %s has recent invite, cancelling redemption", redeemer)
+        await twitch.cancel_redemption(
+            broadcaster_user_id, twitch_reward_id, twitch_redemption_id, token
+        )
+        await twitch.send_chat_message(
+            broadcaster_user_id, broadcaster_user_id,
+            f"@{redeemer} You already have a recent invite. Points refunded.",
+            token,
+        )
+        return
+
     await db.add_redemption(
         sess_id, viewer_id, redeemer, twitch_redemption_id, twitch_reward_id
+    )
+
+    # Notify the viewer's extension panel (if they have it open)
+    asyncio.create_task(
+        ext_pubsub.send_whisper(
+            broadcaster_user_id, viewer_id, {"type": "redemption_ready"}
+        )
     )
 
     site_url = _SITE_URL.rstrip("/")
@@ -1790,6 +1954,16 @@ async def startup():
         raise RuntimeError("SITE_URL must be set before starting")
     if not _EVENTSUB_SECRET:
         raise RuntimeError("THINVITE_EVENTSUB_SECRET must be set before starting")
+    # Extension env vars (optional — only needed if extension is used)
+    ext_secret = os.environ.get("TWITCH_EXT_SECRET")
+    if ext_secret:
+        assert os.environ.get("TWITCH_EXT_CLIENT_ID"), \
+            "TWITCH_EXT_CLIENT_ID required when TWITCH_EXT_SECRET is set"
+        assert os.environ.get("TWITCH_EXT_OWNER_ID"), \
+            "TWITCH_EXT_OWNER_ID required when TWITCH_EXT_SECRET is set"
+        logger.info("Extension EBS enabled")
+    else:
+        logger.info("Extension EBS disabled (TWITCH_EXT_SECRET not set)")
     await db.init_pool()         # pool must be ready before any DB call
     await bot.recover_subscriptions()
     asyncio.create_task(expiry.start_expiry_loop())
@@ -1888,6 +2062,184 @@ ui.add_head_html(
 _roboto_css = _roboto_font_display_css()
 if _roboto_css:
     ui.add_head_html(_roboto_css, shared=True)
+
+
+# ---------------------------------------------------------------------------
+# Extension EBS endpoints
+# ---------------------------------------------------------------------------
+import ext_auth
+
+_follow_age_cache: dict[str, tuple[int | None, float]] = {}
+_FOLLOW_AGE_CACHE_TTL = 600  # 10 minutes
+
+
+def sweep_follow_age_cache() -> int:
+    """Remove stale entries from the follow-age cache. Returns count removed."""
+    now = time.time()
+    stale = [k for k, (_, ts) in _follow_age_cache.items() if now - ts >= _FOLLOW_AGE_CACHE_TTL]
+    for k in stale:
+        del _follow_age_cache[k]
+    return len(stale)
+
+
+async def _ext_get_status(user_id: str, channel_id: str) -> dict:
+    """Core logic for GET /api/ext/status."""
+    config = await db.get_ext_config(channel_id)
+    if not config:
+        return {"error": "not_configured"}
+
+    sess_id = config["session_id"]
+    min_minutes = config["ext_min_follow_minutes"] or 0
+    cooldown = config["ext_cooldown_days"] or 30
+
+    # Check pending channel-point redemptions for this streamer
+    pending = await db.get_pending_redemptions_for_viewer(user_id)
+    pending_here = [r for r in pending if r["streamer_session_id"] == sess_id]
+    has_pending = len(pending_here) > 0
+
+    # Check cooldown
+    on_cooldown = await db.has_recent_invite(user_id, sess_id, cooldown)
+
+    # Check follow age (cached, in minutes)
+    follow_minutes = None
+    follow_eligible = False
+    if not on_cooldown:
+        cache_key = f"{channel_id}:{user_id}"
+        cached = _follow_age_cache.get(cache_key)
+        if cached and (time.time() - cached[1]) < _FOLLOW_AGE_CACHE_TTL:
+            follow_minutes = cached[0]
+        else:
+            user_row = await db.get_user_by_twitch_id(channel_id)
+            if user_row and user_row.get("twitch_auth_token"):
+                follow_minutes = await twitch.get_follow_age(
+                    channel_id, user_id, user_row["twitch_auth_token"]
+                )
+                _follow_age_cache[cache_key] = (follow_minutes, time.time())
+        if follow_minutes is not None:
+            follow_eligible = follow_minutes >= min_minutes
+
+    return {
+        "has_pending_redemption": has_pending,
+        "follow_age_eligible": follow_eligible,
+        "follow_age_minutes": follow_minutes,
+        "min_follow_minutes": min_minutes,
+        "on_cooldown": on_cooldown,
+    }
+
+
+@app.get("/api/ext/status")
+async def ext_status(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return JSONResponse({"error": "missing_token"}, 401)
+    claims = ext_auth.verify_ext_jwt(auth[7:])
+    if claims is None:
+        return JSONResponse({"error": "identity_required"}, 403)
+    if _is_rate_limited(request):
+        return JSONResponse({"error": "rate_limited"}, 429)
+    result = await _ext_get_status(claims["user_id"], claims["channel_id"])
+    status = 404 if result.get("error") == "not_configured" else 200
+    return JSONResponse(result, status)
+
+
+@app.post("/api/ext/claim")
+async def ext_claim(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return JSONResponse({"error": "missing_token"}, 401)
+    claims = ext_auth.verify_ext_jwt(auth[7:])
+    if claims is None:
+        return JSONResponse({"error": "identity_required"}, 403)
+
+    if _is_rate_limited(request):
+        return JSONResponse({"error": "rate_limited"}, 429)
+
+    body = await request.json()
+    claim_type = body.get("type")
+
+    config = await db.get_ext_config(claims["channel_id"])
+    if not config:
+        return JSONResponse({"error": "not_configured"}, 404)
+
+    sess_id = config["session_id"]
+    guild_id = config["discord_server_id"]
+    cooldown = config["ext_cooldown_days"] or 30
+
+    if not guild_id:
+        return JSONResponse({"error": "discord_not_configured"}, 400)
+
+    # Unified cooldown check
+    if await db.has_recent_invite(claims["user_id"], sess_id, cooldown):
+        return JSONResponse({"error": "on_cooldown"}, 409)
+
+    if claim_type == "redemption":
+        pending = await db.get_pending_redemptions_for_viewer(claims["user_id"])
+        pending_here = [r for r in pending if r["streamer_session_id"] == sess_id]
+        if not pending_here:
+            return JSONResponse({"error": "no_pending_redemption"}, 404)
+        redemption = pending_here[0]
+        invite_url = await discorddb.create_invite(guild_id)
+        if not invite_url:
+            return JSONResponse({"error": "invite_creation_failed"}, 500)
+        await db.fulfill_redemption(redemption["id"], invite_url)
+        if redemption.get("twitch_reward_id") and redemption.get("twitch_redemption_id"):
+            await twitch.fulfill_redemption(
+                sess_id, redemption["twitch_reward_id"],
+                redemption["twitch_redemption_id"],
+            )
+        return JSONResponse({"invite_url": invite_url})
+
+    elif claim_type == "follow_age":
+        min_minutes = config["ext_min_follow_minutes"] or 0
+        user_row = await db.get_user_by_twitch_id(claims["channel_id"])
+        if not user_row or not user_row.get("twitch_auth_token"):
+            return JSONResponse({"error": "streamer_token_missing"}, 500)
+        follow_minutes = await twitch.get_follow_age(
+            claims["channel_id"], claims["user_id"], user_row["twitch_auth_token"]
+        )
+        if follow_minutes is None or follow_minutes < min_minutes:
+            return JSONResponse({"error": "not_eligible"}, 403)
+        invite_url = await discorddb.create_invite(guild_id)
+        if not invite_url:
+            return JSONResponse({"error": "invite_creation_failed"}, 500)
+        viewer_info = await twitch.get_user_by_id(
+            claims["user_id"], user_row["twitch_auth_token"]
+        )
+        viewer_name = (viewer_info or {}).get("display_name") or claims["user_id"]
+        await db.add_ext_claim(sess_id, claims["user_id"], viewer_name, invite_url)
+        return JSONResponse({"invite_url": invite_url})
+
+    return JSONResponse({"error": "invalid_type"}, 400)
+
+
+@app.post("/api/ext/config")
+async def ext_config(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return JSONResponse({"error": "missing_token"}, 401)
+    claims = ext_auth.verify_ext_jwt(auth[7:])
+    if claims is None:
+        return JSONResponse({"error": "identity_required"}, 403)
+    if claims.get("role") != "broadcaster":
+        return JSONResponse({"error": "broadcaster_only"}, 403)
+    if _is_rate_limited(request):
+        return JSONResponse({"error": "rate_limited"}, 429)
+
+    body = await request.json()
+    min_follow = body.get("min_follow_minutes")
+    cooldown = body.get("cooldown_days")
+
+    if not isinstance(min_follow, int) or min_follow < 0:
+        return JSONResponse({"error": "invalid_min_follow_minutes"}, 400)
+    if not isinstance(cooldown, int) or cooldown < 1:
+        return JSONResponse({"error": "invalid_cooldown_days"}, 400)
+
+    user = await db.get_user_by_twitch_id(claims["channel_id"])
+    if not user:
+        return JSONResponse({"error": "user_not_found"}, 404)
+
+    await db.set_ext_config(user["session_id"], min_follow, cooldown)
+    return JSONResponse({"ok": True})
 
 
 ui.run(

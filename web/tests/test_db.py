@@ -497,3 +497,62 @@ async def test_is_seen_eventsub_message_prunes_expired(mock_pool):
     first_sql = cur.execute.call_args_list[0][0][0]
     assert "DELETE" in first_sql
     assert "expires_at" in first_sql
+
+
+# ---------------------------------------------------------------------------
+# Extension config — set_ext_config / get_ext_config
+# ---------------------------------------------------------------------------
+async def test_set_ext_config(mock_pool):
+    _, cur = mock_pool
+    await db.set_ext_config("sess-1", 30, 14)
+    cur.execute.assert_called_once()
+    sql = cur.execute.call_args[0][0]
+    assert "ext_min_follow_minutes" in sql
+    assert "ext_cooldown_days" in sql
+
+
+async def test_get_ext_config(mock_pool_factory):
+    _, cur = mock_pool_factory(fetchone={
+        "session_id": "sess-1",
+        "discord_server_id": "123456",
+        "ext_min_follow_minutes": 30,
+        "ext_cooldown_days": 14,
+    })
+    result = await db.get_ext_config("twitch-id-1")
+    assert result["ext_min_follow_minutes"] == 30
+    assert result["ext_cooldown_days"] == 14
+    assert result["discord_server_id"] == "123456"
+
+
+async def test_get_ext_config_not_found(mock_pool_factory):
+    mock_pool_factory(fetchone=None)
+    result = await db.get_ext_config("nonexistent")
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# has_recent_invite
+# ---------------------------------------------------------------------------
+async def test_has_recent_invite_true(mock_pool_factory):
+    mock_pool_factory(fetchone={"cnt": 1})
+    result = await db.has_recent_invite("viewer-1", "sess-1", 30)
+    assert result is True
+
+
+async def test_has_recent_invite_false(mock_pool_factory):
+    mock_pool_factory(fetchone={"cnt": 0})
+    result = await db.has_recent_invite("viewer-1", "sess-1", 30)
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# add_ext_claim
+# ---------------------------------------------------------------------------
+async def test_add_ext_claim(mock_pool):
+    _, cur = mock_pool
+    cur.lastrowid = 42
+    result = await db.add_ext_claim("sess-1", "viewer-1", "viewername", "https://discord.gg/abc")
+    assert result == 42
+    sql = cur.execute.call_args[0][0]
+    assert "source" in sql
+    assert "follow_age" in cur.execute.call_args[0][1]
