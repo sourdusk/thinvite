@@ -34,7 +34,7 @@ def verify_ext_jwt(token: str) -> dict | None:
     except jwt.exceptions.PyJWTError:
         return None
 
-    if "user_id" not in claims:
+    if "user_id" not in claims or "channel_id" not in claims:
         return None
 
     return claims

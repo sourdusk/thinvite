@@ -291,6 +291,25 @@ async def get_user_info(token: str) -> dict:
             return None
 
 
+async def get_user_by_id(user_id: str, token: str) -> dict | None:
+    """Fetch a Twitch user by their numeric ID. Returns user dict or None."""
+    async with aiohttp.ClientSession(
+        timeout=_TIMEOUT,
+        headers={
+            "Client-Id": os.getenv("THINVITE_TWITCH_ID"),
+            "Authorization": f"Bearer {token}",
+        },
+    ) as session:
+        async with session.get(
+            "https://api.twitch.tv/helix/users", params={"id": user_id},
+        ) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            users = data.get("data", [])
+            return users[0] if users else None
+
+
 async def get_channel_redeems(sess_id: str) -> list | None:
     """Return the full list of custom reward objects, or None on error.
 

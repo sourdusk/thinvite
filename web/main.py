@@ -775,7 +775,7 @@ async def streamer_page():
                 cp_toggle.on_value_change(_toggle_cp)
 
         # -- Follow Age Invites toggle --
-        fa_enabled = user_record.get("ext_min_follow_days") is not None
+        fa_enabled = user_record.get("ext_min_follow_minutes") is not None
 
         with ui.row().classes("window-width row justify-center items-center q-mt-lg"):
             with ui.column().classes("items-center").style("max-width: 400px; width: 100%"):
@@ -788,7 +788,7 @@ async def streamer_page():
 
                 with fa_container:
                     # Convert stored minutes to a friendly display value
-                    _stored_min = user_record.get("ext_min_follow_days") or 0
+                    _stored_min = user_record.get("ext_min_follow_minutes") or 0
                     if _stored_min >= 1440 and _stored_min % 1440 == 0:
                         _display_val, _display_unit = _stored_min // 1440, "days"
                     elif _stored_min >= 60 and _stored_min % 60 == 0:
@@ -2073,6 +2073,15 @@ _follow_age_cache: dict[str, tuple[int | None, float]] = {}
 _FOLLOW_AGE_CACHE_TTL = 600  # 10 minutes
 
 
+def sweep_follow_age_cache() -> int:
+    """Remove stale entries from the follow-age cache. Returns count removed."""
+    now = time.time()
+    stale = [k for k, (_, ts) in _follow_age_cache.items() if now - ts >= _FOLLOW_AGE_CACHE_TTL]
+    for k in stale:
+        del _follow_age_cache[k]
+    return len(stale)
+
+
 async def _ext_get_status(user_id: str, channel_id: str) -> dict:
     """Core logic for GET /api/ext/status."""
     config = await db.get_ext_config(channel_id)
@@ -2080,7 +2089,7 @@ async def _ext_get_status(user_id: str, channel_id: str) -> dict:
         return {"error": "not_configured"}
 
     sess_id = config["session_id"]
-    min_minutes = config["ext_min_follow_days"] or 0  # column stores minutes now
+    min_minutes = config["ext_min_follow_minutes"] or 0
     cooldown = config["ext_cooldown_days"] or 30
 
     # Check pending channel-point redemptions for this streamer
@@ -2126,6 +2135,8 @@ async def ext_status(request: Request):
     claims = ext_auth.verify_ext_jwt(auth[7:])
     if claims is None:
         return JSONResponse({"error": "identity_required"}, 403)
+    if _is_rate_limited(request):
+        return JSONResponse({"error": "rate_limited"}, 429)
     result = await _ext_get_status(claims["user_id"], claims["channel_id"])
     status = 404 if result.get("error") == "not_configured" else 200
     return JSONResponse(result, status)
@@ -2179,7 +2190,7 @@ async def ext_claim(request: Request):
         return JSONResponse({"invite_url": invite_url})
 
     elif claim_type == "follow_age":
-        min_minutes = config["ext_min_follow_days"] or 0  # column stores minutes now
+        min_minutes = config["ext_min_follow_minutes"] or 0
         user_row = await db.get_user_by_twitch_id(claims["channel_id"])
         if not user_row or not user_row.get("twitch_auth_token"):
             return JSONResponse({"error": "streamer_token_missing"}, 500)
@@ -2191,7 +2202,10 @@ async def ext_claim(request: Request):
         invite_url = await discorddb.create_invite(guild_id)
         if not invite_url:
             return JSONResponse({"error": "invite_creation_failed"}, 500)
-        viewer_name = claims.get("opaque_user_id", claims["user_id"])
+        viewer_info = await twitch.get_user_by_id(
+            claims["user_id"], user_row["twitch_auth_token"]
+        )
+        viewer_name = (viewer_info or {}).get("display_name") or claims["user_id"]
         await db.add_ext_claim(sess_id, claims["user_id"], viewer_name, invite_url)
         return JSONResponse({"invite_url": invite_url})
 
@@ -2208,6 +2222,8 @@ async def ext_config(request: Request):
         return JSONResponse({"error": "identity_required"}, 403)
     if claims.get("role") != "broadcaster":
         return JSONResponse({"error": "broadcaster_only"}, 403)
+    if _is_rate_limited(request):
+        return JSONResponse({"error": "rate_limited"}, 429)
 
     body = await request.json()
     min_follow = body.get("min_follow_minutes")

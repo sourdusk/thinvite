@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS users (
     discord_user_id VARCHAR(255),
     discord_server_id VARCHAR(255),
     discord_auth_code VARCHAR(255),
-    ext_min_follow_days INT DEFAULT NULL,
+    ext_min_follow_minutes INT DEFAULT NULL,
     ext_cooldown_days INT DEFAULT NULL,
     INDEX idx_twitch_user_id (twitch_user_id)
 );

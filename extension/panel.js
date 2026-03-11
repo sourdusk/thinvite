@@ -108,6 +108,12 @@
         showState("not-configured");
         return;
       }
+      if (res.status === 429) {
+        document.getElementById("error-text").textContent =
+          "Too many requests. Please try again later.";
+        showState("error");
+        return;
+      }
       var d = res.data;
       if (d.on_cooldown) {
         document.getElementById("cooldown-text").textContent =
@@ -148,6 +154,10 @@
         var link = document.getElementById("invite-link");
         link.href = res.data.invite_url;
         showState("success");
+      } else if (res.status === 429) {
+        document.getElementById("error-text").textContent =
+          "Too many requests. Please try again later.";
+        showState("error");
       } else {
         var msg = res.data.error === "on_cooldown"
           ? "You already claimed an invite recently."

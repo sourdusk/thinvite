@@ -475,18 +475,18 @@ async def expire_redemption(redemption_id: int) -> None:
 # ---------------------------------------------------------------------------
 
 async def set_ext_config(
-    session_id: str, min_follow_days: int | None, cooldown_days: int | None,
+    session_id: str, min_follow_minutes: int | None, cooldown_days: int | None,
 ) -> None:
-    """Set extension config (min follow age, cooldown) for a streamer.
+    """Set extension config (min follow age in minutes, cooldown) for a streamer.
 
     Pass None for both to disable follow-age invites.
     """
     async with _acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "UPDATE users SET ext_min_follow_days = %s, ext_cooldown_days = %s "
+                "UPDATE users SET ext_min_follow_minutes = %s, ext_cooldown_days = %s "
                 "WHERE session_id = %s",
-                (min_follow_days, cooldown_days, session_id),
+                (min_follow_minutes, cooldown_days, session_id),
             )
 
 
@@ -495,7 +495,7 @@ async def get_ext_config(streamer_twitch_id: str) -> dict | None:
     async with _acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                "SELECT session_id, discord_server_id, ext_min_follow_days, ext_cooldown_days "
+                "SELECT session_id, discord_server_id, ext_min_follow_minutes, ext_cooldown_days "
                 "FROM users WHERE twitch_user_id = %s",
                 (streamer_twitch_id,),
             )

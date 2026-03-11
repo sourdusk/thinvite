@@ -507,7 +507,7 @@ async def test_set_ext_config(mock_pool):
     await db.set_ext_config("sess-1", 30, 14)
     cur.execute.assert_called_once()
     sql = cur.execute.call_args[0][0]
-    assert "ext_min_follow_days" in sql
+    assert "ext_min_follow_minutes" in sql
     assert "ext_cooldown_days" in sql
 
 
@@ -515,11 +515,11 @@ async def test_get_ext_config(mock_pool_factory):
     _, cur = mock_pool_factory(fetchone={
         "session_id": "sess-1",
         "discord_server_id": "123456",
-        "ext_min_follow_days": 30,
+        "ext_min_follow_minutes": 30,
         "ext_cooldown_days": 14,
     })
     result = await db.get_ext_config("twitch-id-1")
-    assert result["ext_min_follow_days"] == 30
+    assert result["ext_min_follow_minutes"] == 30
     assert result["ext_cooldown_days"] == 14
     assert result["discord_server_id"] == "123456"
 

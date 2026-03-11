@@ -49,7 +49,7 @@ async def test_ext_status_eligible():
     """Returns eligible when viewer meets follow-age requirement."""
     config = {
         "session_id": "sess-1", "discord_server_id": "guild-1",
-        "ext_min_follow_days": 30, "ext_cooldown_days": 14,
+        "ext_min_follow_minutes": 30, "ext_cooldown_days": 14,
     }
     user_row = {"twitch_auth_token": "tok-1", "session_id": "sess-1"}
     with patch("db.get_ext_config", new_callable=AsyncMock, return_value=config), \
@@ -66,7 +66,7 @@ async def test_ext_status_pending_redemption():
     """Returns has_pending_redemption when viewer has a pending channel-point claim."""
     config = {
         "session_id": "sess-1", "discord_server_id": "guild-1",
-        "ext_min_follow_days": 30, "ext_cooldown_days": 14,
+        "ext_min_follow_minutes": 30, "ext_cooldown_days": 14,
     }
     pending = [{"id": 1, "streamer_session_id": "sess-1"}]
     user_row = {"twitch_auth_token": "tok-1", "session_id": "sess-1"}

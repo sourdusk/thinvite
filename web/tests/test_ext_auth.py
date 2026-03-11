@@ -76,6 +76,18 @@ def test_missing_user_id_returns_none():
     assert verify_ext_jwt(token) is None
 
 
+def test_missing_channel_id_returns_none():
+    from ext_auth import verify_ext_jwt
+
+    token = _make_jwt({
+        "user_id": "99999",
+        "role": "viewer",
+        "opaque_user_id": "U99999",
+        "exp": int(time.time()) + 300,
+    })
+    assert verify_ext_jwt(token) is None
+
+
 def test_sign_ebs_jwt():
     from ext_auth import sign_ebs_jwt
 
