@@ -122,11 +122,12 @@
           "You\u2019ve followed for " + formatDuration(d.follow_age_minutes) +
           " \u2014 claim your Discord invite!";
         showState("eligible");
-      } else if (d.follow_age_minutes !== null) {
-        var needed = d.min_follow_minutes - d.follow_age_minutes;
-        document.getElementById("not-eligible-text").textContent =
-          "Follow for " + formatDuration(needed) +
-          " more to earn a Discord invite.";
+      } else if (typeof d.follow_age_minutes === "number") {
+        var needed = (d.min_follow_minutes || 0) - d.follow_age_minutes;
+        document.getElementById("not-eligible-text").textContent = needed > 0
+          ? "Follow for " + formatDuration(needed) +
+            " more to earn a Discord invite."
+          : "Follow this channel to earn a Discord invite.";
         showState("not-eligible");
       } else {
         document.getElementById("not-eligible-text").textContent =
