@@ -86,7 +86,10 @@ class _SecurityHeadersMiddleware:
         if origin in cls._EXT_CORS_ALLOWED:
             return True
         # Hosted test: https://<client-id>.ext-twitch.tv
-        return origin.startswith(b"https://") and origin.endswith(b".ext-twitch.tv")
+        # Config page: https://dashboard.twitch.tv (or other *.twitch.tv)
+        if not origin.startswith(b"https://"):
+            return False
+        return origin.endswith(b".ext-twitch.tv") or origin.endswith(b".twitch.tv")
 
     @staticmethod
     def _get_origin(scope) -> bytes | None:
@@ -2135,6 +2138,9 @@ async def _ext_get_status(user_id: str, channel_id: str) -> dict:
     if not follow_age_enabled and not cp_enabled:
         return {"error": "not_configured"}
 
+    if not config["discord_server_id"]:
+        return {"error": "not_configured"}
+
     sess_id = config["session_id"]
     min_minutes = config["ext_min_follow_minutes"] or 0
     cooldown = config["ext_cooldown_days"] or 30
@@ -2267,6 +2273,24 @@ async def ext_claim(request: Request):
         return JSONResponse({"invite_url": invite_url})
 
     return JSONResponse({"error": "invalid_type"}, 400)
+
+
+@app.get("/api/ext/config")
+async def ext_config_get(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return JSONResponse({"error": "missing_token"}, 401)
+    claims = ext_auth.verify_ext_jwt(auth[7:])
+    if claims is None:
+        return JSONResponse({"error": "identity_required"}, 403)
+    if claims.get("role") != "broadcaster":
+        return JSONResponse({"error": "broadcaster_only"}, 403)
+
+    config = await db.get_ext_config(claims["channel_id"])
+    return JSONResponse({
+        "min_follow_minutes": config["ext_min_follow_minutes"] if config else None,
+        "cooldown_days": config["ext_cooldown_days"] if config else None,
+    })
 
 
 @app.post("/api/ext/config")

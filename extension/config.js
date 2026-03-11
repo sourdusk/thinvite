@@ -14,17 +14,20 @@
 
   Twitch.ext.onAuthorized(function (auth) {
     token = auth.token;
-    // Load current config from Twitch Configuration Service
-    var config = Twitch.ext.configuration.broadcaster;
-    if (config && config.content) {
-      try {
-        var c = JSON.parse(config.content);
-        var d = minutesToDisplay(c.min_follow_minutes || 0);
+    // Load current config from EBS
+    fetch(EBS_BASE + "/api/ext/config", {
+      method: "GET",
+      headers: { "Authorization": "Bearer " + token },
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data.min_follow_minutes != null) {
+        var d = minutesToDisplay(data.min_follow_minutes);
         document.getElementById("min-follow").value = d.val;
         document.getElementById("min-follow-unit").value = d.unit;
-        document.getElementById("cooldown").value = c.cooldown_days || 30;
-      } catch (e) { /* use defaults */ }
-    }
+      }
+      if (data.cooldown_days != null) {
+        document.getElementById("cooldown").value = data.cooldown_days;
+      }
+    }).catch(function () { /* use defaults */ });
   });
 
   document.getElementById("save-btn").addEventListener("click", function () {
@@ -43,17 +46,21 @@
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ min_follow_minutes: minFollowMinutes, cooldown_days: cooldown }),
-    }).then(function (r) { return r.json(); }).then(function (data) {
-      if (data.ok) {
-        // Also save to Twitch Configuration Service for panel cache
-        Twitch.ext.configuration.set("broadcaster", "1",
-          JSON.stringify({ min_follow_minutes: minFollowMinutes, cooldown_days: cooldown }));
-        msg("Saved!", false);
-      } else {
-        msg("Error: " + (data.error || "unknown"), true);
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.json().then(function (data) {
+          msg("Error: " + (data.error || r.status), true);
+        });
       }
-    }).catch(function () {
-      msg("Network error", true);
+      return r.json().then(function (data) {
+        if (data.ok) {
+          msg("Saved!", false);
+        } else {
+          msg("Error: " + (data.error || "unknown"), true);
+        }
+      });
+    }).catch(function (err) {
+      msg("Network error: " + (err.message || "check console"), true);
     });
   });
 

@@ -138,3 +138,10 @@ body.light .btn-secondary {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Leaving notice ───────────────────────────────────────────── */
+
+.leaving-notice {
+  margin-top: 10px;
+  font-size: 11px;
+}

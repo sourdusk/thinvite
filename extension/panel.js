@@ -9,15 +9,16 @@
 
   // --- Helpers -------------------------------------------------------------
 
-  function formatDuration(minutes) {
+  function formatDuration(minutes, infix) {
+    var mid = infix ? infix + " " : "";
     if (minutes >= 1440) {
       var days = Math.floor(minutes / 1440);
-      return days + " day" + (days !== 1 ? "s" : "");
+      return days + " " + mid + "day" + (days !== 1 ? "s" : "");
     } else if (minutes >= 60) {
       var hours = Math.floor(minutes / 60);
-      return hours + " hour" + (hours !== 1 ? "s" : "");
+      return hours + " " + mid + "hour" + (hours !== 1 ? "s" : "");
     }
-    return minutes + " minute" + (minutes !== 1 ? "s" : "");
+    return minutes + " " + mid + "minute" + (minutes !== 1 ? "s" : "");
   }
 
   // --- State management ---------------------------------------------------
@@ -131,14 +132,23 @@
         showState("eligible");
       } else if (d.follow_age_enabled && typeof d.follow_age_minutes === "number") {
         var needed = (d.min_follow_minutes || 0) - d.follow_age_minutes;
-        document.getElementById("not-eligible-text").textContent = needed > 0
-          ? "Follow for " + formatDuration(needed) +
-            " more to earn a Discord invite."
-          : "Follow this channel to earn a Discord invite.";
+        var txt;
+        if (needed > 0) {
+          txt = "Follow for " + formatDuration(needed, "more");
+          if (d.cp_enabled) txt += " or redeem channel points";
+          txt += " to earn a Discord invite.";
+        } else {
+          txt = "Follow this channel";
+          if (d.cp_enabled) txt += " or redeem channel points";
+          txt += " to earn a Discord invite.";
+        }
+        document.getElementById("not-eligible-text").textContent = txt;
         showState("not-eligible");
       } else if (d.follow_age_enabled) {
-        document.getElementById("not-eligible-text").textContent =
-          "Follow this channel to earn a Discord invite.";
+        var txt = "Follow this channel";
+        if (d.cp_enabled) txt += " or redeem channel points";
+        txt += " to earn a Discord invite.";
+        document.getElementById("not-eligible-text").textContent = txt;
         showState("not-eligible");
       } else if (d.cp_enabled) {
         document.getElementById("not-eligible-text").textContent =
