@@ -451,10 +451,10 @@ async def about_page():
         with ui.element("div").classes("th-about-hero"):
             ui.html(
                 '<p class="th-label">How It Works</p>'
-                '<h1>Twitch channel points.<br>Discord invites.<br>'
+                '<h1>Twitch loyalty.<br>Discord invites.<br>'
                 'One seamless bridge.</h1>'
                 '<p class="th-body">Thinvite is a free, open-source service that lets '
-                "streamers gate Discord access behind a Twitch channel point redeem. "
+                "streamers gate Discord access behind channel point redeems or follow age. "
                 "Every invite is single-use, time-limited, and tied to a verified viewer.</p>",
                 sanitize=False,
             )
@@ -476,9 +476,9 @@ async def about_page():
                 '<div class="th-about-step">'
                 '<span class="th-about-step-num">2</span>'
                 '<div class="th-about-step-content">'
-                "<h3>Pick a channel point redeem</h3>"
-                "<p>Choose which redeem triggers an invite. Thinvite automatically "
-                "disables skip-queue so every redemption is verified.</p>"
+                "<h3>Choose your invite method</h3>"
+                "<p>Gate invites behind a channel point redeem, a minimum follow age, "
+                "or both. Viewers can claim from your Twitch panel or the Thinvite site.</p>"
                 "</div></div>",
                 sanitize=False,
             )
@@ -501,9 +501,9 @@ async def about_page():
                 '<div class="th-about-step">'
                 '<span class="th-about-step-num">1</span>'
                 '<div class="th-about-step-content">'
-                "<h3>Redeem channel points</h3>"
-                "<p>Use the streamer\u2019s chosen channel point redeem on Twitch, "
-                "just like any other reward.</p>"
+                "<h3>Earn an invite</h3>"
+                "<p>Redeem channel points on Twitch, or meet the streamer\u2019s "
+                "minimum follow age \u2014 whichever they\u2019ve enabled.</p>"
                 "</div></div>",
                 sanitize=False,
             )
@@ -511,9 +511,9 @@ async def about_page():
                 '<div class="th-about-step">'
                 '<span class="th-about-step-num">2</span>'
                 '<div class="th-about-step-content">'
-                "<h3>Sign in to verify</h3>"
-                "<p>Sign in with your Twitch account on Thinvite. This confirms "
-                "you\u2019re the person who redeemed the points.</p>"
+                "<h3>Claim your invite</h3>"
+                "<p>Claim directly from the streamer\u2019s Twitch panel extension, "
+                "or sign in on Thinvite to verify your identity.</p>"
                 "</div></div>",
                 sanitize=False,
             )
@@ -521,8 +521,8 @@ async def about_page():
                 '<div class="th-about-step">'
                 '<span class="th-about-step-num">3</span>'
                 '<div class="th-about-step-content">'
-                "<h3>Get your invite</h3>"
-                "<p>Receive a single-use Discord invite link. "
+                "<h3>Join the server</h3>"
+                "<p>Receive a single-use Discord invite link that expires in 24 hours. "
                 "No sharing, no abuse.</p>"
                 "</div></div>",
                 sanitize=False,
@@ -1677,9 +1677,10 @@ async def privacy_page():
         section(
             "1. Overview",
             "Thinvite is a service operated by SourK9 Designs, LLC ('we', 'us', 'our') that links "
-            "Twitch channel point redemptions to single-use Discord server invitations. This policy "
-            "explains what data we collect, why we collect it, how it is used, and your rights under "
-            "applicable data protection laws including the EU General Data Protection Regulation (GDPR).",
+            "Twitch channel point redemptions and follow-age eligibility to single-use Discord server "
+            "invitations. This policy explains what data we collect, why we collect it, how it is used, "
+            "and your rights under applicable data protection laws including the EU General Data "
+            "Protection Regulation (GDPR).",
         )
 
         section(
@@ -1693,13 +1694,17 @@ async def privacy_page():
             "Everyone: A single strictly necessary session cookie used to maintain your authentication "
             "state across pages. No advertising or tracking cookies are used.",
             "Streamers: Twitch username, Twitch user ID, Twitch OAuth access and refresh tokens "
-            "(used to send chat messages and listen for channel point events), the channel point "
-            "redeem ID you select, your Discord user ID, and your Discord server (guild) ID.",
+            "(used to send chat messages, listen for channel point events, and check viewer follow age), "
+            "the channel point redeem ID you select, your extension invite settings (minimum follow age, "
+            "cooldown period), your Discord user ID, and your Discord server (guild) ID.",
             "Viewers: Your Twitch username and Twitch user ID are recorded at the moment you claim "
-            "an invite. The temporary Twitch OAuth token is revoked immediately after your identity "
-            "is confirmed — we do not store it.",
-            "Redemption records: viewer Twitch username, associated streamer, timestamps "
-            "(redeemed, fulfilled, revoked), and the Discord invite URL generated.",
+            "an invite. When claiming via the Twitch panel extension, your Twitch user ID and follow "
+            "age are verified using the Twitch Extension JWT provided by Twitch. The temporary Twitch "
+            "OAuth token used for site-based claims is revoked immediately after your identity is "
+            "confirmed \u2014 we do not store it.",
+            "Redemption records: viewer Twitch username, associated streamer, invite source "
+            "(channel points, follow age, or manual), timestamps (redeemed, fulfilled, revoked), "
+            "and the Discord invite URL generated.",
         )
 
         section(
@@ -1715,9 +1720,10 @@ async def privacy_page():
         section(
             "5. How We Use Your Data",
             "To maintain your authentication state between page loads.",
-            "To create single-use Discord server invitations when a viewer redeems the configured "
-            "channel point.",
-            "To send an automated Twitch chat message directing the viewer to the /redeem page.",
+            "To create single-use Discord server invitations when a viewer redeems channel points "
+            "or meets the configured follow-age requirement.",
+            "To verify viewer follow age via the Twitch API when processing extension-based claims.",
+            "To send an automated Twitch chat message directing the viewer to claim their invite.",
             "To keep an audit trail of redemption activity for abuse prevention.",
             "We do not sell, rent, or share your data with any third party beyond what is required "
             "to operate the service (Twitch API and Discord API).",
@@ -1745,10 +1751,12 @@ async def privacy_page():
 
         section(
             "8. Third-Party Services",
-            "Twitch — used for streamer authentication, channel point event subscriptions, and "
-            "viewer identity verification. Twitch's own privacy policy applies to data shared with "
-            "their platform.",
-            "Discord — used to create server invitations via the Discord Bot API. Discord's own "
+            "Twitch \u2014 used for streamer authentication, channel point event subscriptions, "
+            "viewer identity verification, and follow-age checks. When you use the Thinvite Twitch "
+            "panel extension, Twitch provides us with a signed JWT containing your Twitch user ID "
+            "and the channel ID. Twitch\u2019s own privacy policy applies to data shared with their "
+            "platform.",
+            "Discord \u2014 used to create server invitations via the Discord Bot API. Discord\u2019s own "
             "privacy policy applies to data shared with their platform.",
         )
 
