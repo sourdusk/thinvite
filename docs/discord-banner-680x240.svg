@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="240" viewBox="0 0 680 240" fill="none">
+  <defs>
+    <linearGradient id="logo-bg" x1="0" y1="0" x2="88" y2="88" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7c5af0"/>
+      <stop offset="100%" stop-color="#3d6ef5"/>
+    </linearGradient>
+    <linearGradient id="accent-grad" x1="0" y1="0" x2="680" y2="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7c5af0" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#3d6ef5" stop-opacity="0.08"/>
+    </linearGradient>
+    <linearGradient id="text-grad" x1="280" y1="60" x2="520" y2="140" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7c5af0"/>
+      <stop offset="100%" stop-color="#3d6ef5"/>
+    </linearGradient>
+    <radialGradient id="orb1" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#7c5af0" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#7c5af0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="orb2" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#3d6ef5" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#3d6ef5" stop-opacity="0"/>
+    </radialGradient>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700&amp;family=DM+Sans:wght@400;500&amp;display=swap');
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="680" height="240" fill="#0d0d14"/>
+  <rect width="680" height="240" fill="url(#accent-grad)"/>
+
+  <!-- Ambient orbs -->
+  <ellipse cx="180" cy="100" rx="200" ry="160" fill="url(#orb1)"/>
+  <ellipse cx="520" cy="160" rx="180" ry="140" fill="url(#orb2)"/>
+
+  <!-- Subtle top border accent -->
+  <rect x="0" y="0" width="680" height="1.5" fill="url(#text-grad)" opacity="0.4"/>
+
+  <!-- Logo mark (scaled up) -->
+  <g transform="translate(142, 52)">
+    <rect width="88" height="88" rx="18" fill="url(#logo-bg)"/>
+    <circle cx="27" cy="60" r="15.5" stroke="white" stroke-width="3.5" fill="none"/>
+    <circle cx="67" cy="26" r="10" fill="white"/>
+    <line x1="43" y1="45" x2="57" y2="34" stroke="white" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- "Thin" in frost white -->
+  <text x="248" y="114" font-family="'Syne', sans-serif" font-weight="700" font-size="52" letter-spacing="-0.5" fill="#f0eeff">Thin</text>
+  <!-- "vite" in gradient -->
+  <text x="378" y="114" font-family="'Syne', sans-serif" font-weight="700" font-size="52" letter-spacing="-0.5" fill="url(#text-grad)">vite</text>
+
+  <!-- Tagline -->
+  <text x="340" y="156" font-family="'DM Sans', sans-serif" font-weight="400" font-size="18" fill="#7070a0" text-anchor="middle" letter-spacing="0.5">Secure Discord invites for your Twitch community</text>
+
+  <!-- URL -->
+  <text x="340" y="186" font-family="'DM Sans', sans-serif" font-weight="500" font-size="16" fill="#9d7df5" text-anchor="middle" letter-spacing="1.5">thinvite.app</text>
+</svg>
