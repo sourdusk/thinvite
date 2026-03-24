@@ -1,6 +1,6 @@
 # Contributing to Thinvite
 
-Thanks for your interest in contributing! Thinvite is beta software and we welcome bug reports, feature suggestions, and pull requests.
+Thanks for your interest in contributing to [Thinvite](https://thinvite.app)! Thinvite is beta software and we welcome bug reports, feature suggestions, and pull requests.
 
 ## Reporting Issues
 

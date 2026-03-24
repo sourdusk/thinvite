@@ -1,5 +1,7 @@
 # Thinvite
 
+**[thinvite.app](https://thinvite.app)**
+
 Thinvite is an open-source solution that securely invites users to your Discord server by integrating Twitch channel point redeems with Discord invites. This limits the exposure of invite links and helps prevent malicious actors from accessing your community.
 
 > **Beta software** — Thinvite is under active development. APIs, database schema, and configuration may change between releases. Breaking changes will be noted in commit history.
@@ -40,7 +42,7 @@ Thinvite is an open-source solution that securely invites users to your Discord 
 
 3. Create a `web/.env` file for the application (see `web/.env.example` for all options):
    ```
-   SITE_URL=https://thinvite.example.com
+   SITE_URL=https://thinvite.app
    THINVITE_DB_PASSWORD=your_db_password
    THINVITE_TWITCH_ID=your_twitch_client_id
    THINVITE_TWITCH_SECRET=your_twitch_client_secret
@@ -71,8 +73,8 @@ Thinvite is an open-source solution that securely invites users to your Discord 
 In your Twitch Developer Console, add these redirect URIs:
 
 ```
-https://your-domain.com/api/twitch/auth_code
-https://your-domain.com/api/twitch/viewer_auth
+https://thinvite.app/api/twitch/auth_code
+https://thinvite.app/api/twitch/viewer_auth
 ```
 
 ## Discord OAuth Redirect URI
@@ -80,7 +82,7 @@ https://your-domain.com/api/twitch/viewer_auth
 In your Discord Developer Portal, add this redirect URI:
 
 ```
-https://your-domain.com/api/discord
+https://thinvite.app/api/discord
 ```
 
 ## Services
