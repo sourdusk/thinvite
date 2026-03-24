@@ -379,6 +379,17 @@ async def get_user_by_twitch_id(twitch_user_id: str) -> dict:
             return await cur.fetchone()
 
 
+async def get_user_by_twitch_name(username: str) -> dict | None:
+    """Return the user row matching the given Twitch username (case-insensitive)."""
+    async with _acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT * FROM users WHERE LOWER(twitch_user_name) = LOWER(%s)",
+                (username,),
+            )
+            return await cur.fetchone()
+
+
 async def set_eventsub_subscription(sess_id: str, sub_id: str) -> None:
     """Store the Twitch EventSub subscription ID for a session."""
     async with _acquire() as conn:
@@ -488,7 +499,7 @@ async def expire_redemption(redemption_id: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Extension helpers
+# Follow-age helpers
 # ---------------------------------------------------------------------------
 
 async def set_ext_config(

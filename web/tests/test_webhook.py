@@ -130,8 +130,7 @@ async def test_handle_event_adds_redemption_and_sends_chat():
          patch("main.db.has_pending_redemption", AsyncMock(return_value=False)), \
          patch("main.db.has_recent_invite", AsyncMock(return_value=False)), \
          patch("main.db.add_redemption", AsyncMock()) as mock_add, \
-         patch("main.twitch.send_chat_message", AsyncMock(return_value=True)) as mock_chat, \
-         patch("main.ext_pubsub.send_whisper", AsyncMock()):
+         patch("main.twitch.send_chat_message", AsyncMock(return_value=True)) as mock_chat:
         await main._handle_eventsub_event(payload)
 
     mock_add.assert_called_once_with("s1", "v1", "viewer1", "rid1", "rw1")

@@ -187,22 +187,31 @@ async def delete_eventsub_subscription(subscription_id: str, app_token: str) -> 
 async def get_eventsub_subscription_status(
     subscription_id: str, app_token: str
 ) -> str | None:
-    """Return the status string of an EventSub subscription, or None if not found."""
-    async with aiohttp.ClientSession(
-        timeout=_TIMEOUT,
-        headers={
-            "client-id": os.getenv("THINVITE_TWITCH_ID"),
-            "Authorization": f"Bearer {app_token}",
-        },
-    ) as session:
-        async with session.get(
-            f"https://api.twitch.tv/helix/eventsub/subscriptions?id={subscription_id}",
-        ) as resp:
-            if resp.status != 200:
-                return None
-            res = await resp.json()
-            data = res.get("data", [])
-            return data[0].get("status") if data else None
+    """Return the status string of an EventSub subscription, or None if not found.
+
+    Twitch's EventSub API does not support filtering by subscription ID, so we
+    paginate through all subscriptions and search for the matching ID.
+    """
+    cursor = None
+    headers = {
+        "client-id": os.getenv("THINVITE_TWITCH_ID"),
+        "Authorization": f"Bearer {app_token}",
+    }
+    async with aiohttp.ClientSession(timeout=_TIMEOUT, headers=headers) as session:
+        while True:
+            url = "https://api.twitch.tv/helix/eventsub/subscriptions"
+            if cursor:
+                url += f"?after={cursor}"
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return None
+                res = await resp.json()
+                for sub in res.get("data", []):
+                    if sub.get("id") == subscription_id:
+                        return sub.get("status")
+                cursor = res.get("pagination", {}).get("cursor")
+                if not cursor:
+                    return None
 
 
 # ---------------------------------------------------------------------------

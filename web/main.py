@@ -49,7 +49,6 @@ import bot
 import captcha
 import discorddb
 import expiry
-import ext_pubsub
 import mail
 import twitch
 import db
@@ -74,55 +73,10 @@ class _SecurityHeadersMiddleware:
     def __init__(self, app) -> None:
         self.app = app
 
-    _EXT_CORS_ALLOWED = {
-        b"https://extension-files.twitch.tv",
-        b"https://localhost:8080",
-    }
-
-    @classmethod
-    def _is_ext_origin(cls, origin: bytes | None) -> bool:
-        if origin is None:
-            return False
-        if origin in cls._EXT_CORS_ALLOWED:
-            return True
-        # Hosted test: https://<client-id>.ext-twitch.tv
-        # Config page: https://dashboard.twitch.tv (or other *.twitch.tv)
-        if not origin.startswith(b"https://"):
-            return False
-        return origin.endswith(b".ext-twitch.tv") or origin.endswith(b".twitch.tv")
-
-    @staticmethod
-    def _get_origin(scope) -> bytes | None:
-        for key, val in scope.get("headers", []):
-            if key == b"origin":
-                return val
-        return None
-
-    def _cors_headers(self, origin: bytes) -> list[tuple[bytes, bytes]]:
-        return [
-            (b"access-control-allow-origin", origin),
-            (b"access-control-allow-headers", b"Authorization, Content-Type"),
-            (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
-            (b"access-control-max-age", b"86400"),
-        ]
-
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-
-        # CORS preflight for extension routes — respond immediately
-        path = scope.get("path", "")
-        if path.startswith("/api/ext/") and scope.get("method") == "OPTIONS":
-            origin = self._get_origin(scope)
-            if self._is_ext_origin(origin):
-                await send({
-                    "type": "http.response.start",
-                    "status": 204,
-                    "headers": self._cors_headers(origin),
-                })
-                await send({"type": "http.response.body", "body": b""})
-                return
 
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
@@ -155,14 +109,6 @@ class _SecurityHeadersMiddleware:
                 )
                 if not is_static:
                     headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-                # CORS headers for extension routes
-                if path.startswith("/api/ext/"):
-                    origin = self._get_origin(scope)
-                    if self._is_ext_origin(origin):
-                        headers["Access-Control-Allow-Origin"] = origin.decode()
-                        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-                        headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-                        headers["Access-Control-Max-Age"] = "86400"
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
@@ -722,7 +668,8 @@ async def streamer_page():
 
                         async def update_redeem():
                             new_id = sel.value
-                            if new_id == current_redeem:
+                            db_redeem = await twitch.get_set_redeem(_sess_id())
+                            if new_id == db_redeem:
                                 ui.notify("That redeem is already selected.", type="info")
                                 return
 
@@ -792,13 +739,30 @@ async def streamer_page():
         with ui.row().classes("window-width row justify-center items-center q-mt-lg"):
             with ui.column().classes("items-center").style("max-width: 400px; width: 100%"):
                 fa_toggle = ui.switch(
-                    "Follow Age Invites (Extension Panel)", value=fa_enabled,
+                    "Follow Age Invites", value=fa_enabled,
                 ).classes("q-mb-sm")
 
                 fa_container = ui.column().classes("items-center full-width")
                 fa_container.set_visibility(fa_enabled)
 
                 with fa_container:
+                    # Shareable claim link
+                    _claim_url = f"{_SITE_URL.rstrip('/')}/claim/{user_record['twitch_user_name']}"
+                    with ui.row().classes("items-center gap-sm q-mb-sm"):
+                        claim_link_input = ui.input(
+                            "Claim link", value=_claim_url,
+                        ).props("outlined dense readonly").style("width: 100%")
+                        ui.button(
+                            icon="content_copy",
+                            on_click=lambda: (
+                                ui.run_javascript(
+                                    f"navigator.clipboard.writeText({_claim_url!r})"
+                                ),
+                                ui.notify("Link copied!", type="positive"),
+                            ),
+                            color=None,
+                        ).props("flat dense")
+
                     # Convert stored minutes to a friendly display value
                     _stored_min = user_record.get("ext_min_follow_minutes") or 0
                     if _stored_min >= 1440 and _stored_min % 1440 == 0:
@@ -825,7 +789,7 @@ async def streamer_page():
                         min=1, step=1,
                     ).props("outlined dense")
 
-                    async def save_ext_config():
+                    async def save_fa_config():
                         val = int(min_follow.value)
                         unit = min_follow_unit.value
                         if unit == "hours":
@@ -835,10 +799,10 @@ async def streamer_page():
                         await db.set_ext_config(
                             _sess_id(), val, int(cooldown_input.value),
                         )
-                        ui.notify("Extension settings saved!", type="positive")
+                        ui.notify("Follow age settings saved!", type="positive")
 
                     ui.button(
-                        "Save Extension Settings", on_click=save_ext_config,
+                        "Save Follow Age Settings", on_click=save_fa_config,
                         color="#6441a5",
                     ).classes("q-mt-sm")
 
@@ -1339,6 +1303,66 @@ async def viewer_auth_page(request: Request):
         return
 
     viewer_user_id = user_info["id"]
+    viewer_display_name = user_info.get("display_name") or viewer_user_id
+
+    # -----------------------------------------------------------------------
+    # Follow-age claim flow (from /claim/{streamer_name} page)
+    # -----------------------------------------------------------------------
+    claim_sess = app.storage.user.pop("claim_streamer_sess", None)
+    claim_twitch_id = app.storage.user.pop("claim_streamer_twitch_id", None)
+    claim_streamer_name = app.storage.user.pop("claim_streamer_name", None)
+    claim_redirect = f"/claim/{claim_streamer_name}" if claim_streamer_name else "/redeem"
+
+    if claim_sess and claim_twitch_id:
+        config = await db.get_ext_config(claim_twitch_id)
+        if not config or config["ext_min_follow_minutes"] is None or not config["discord_server_id"]:
+            app.storage.user["claim_error"] = "This streamer's invite settings have changed. Please try again."
+            ui.navigate.to(claim_redirect)
+            return
+
+        cooldown = config["ext_cooldown_days"] or 30
+        if await db.has_recent_invite(viewer_user_id, claim_sess, cooldown):
+            app.storage.user["claim_error"] = "You already have a recent invite from this streamer."
+            ui.navigate.to(claim_redirect)
+            return
+
+        streamer_row = await db.get_user_by_twitch_id(claim_twitch_id)
+        if not streamer_row or not streamer_row.get("twitch_auth_token"):
+            app.storage.user["claim_error"] = "Unable to verify your follow status. Please try again later."
+            ui.navigate.to(claim_redirect)
+            return
+
+        follow_minutes = await twitch.get_follow_age(
+            claim_twitch_id, viewer_user_id, streamer_row["twitch_auth_token"]
+        )
+        min_minutes = config["ext_min_follow_minutes"]
+        if follow_minutes is None:
+            app.storage.user["claim_error"] = "You don't appear to be following this streamer."
+            ui.navigate.to(claim_redirect)
+            return
+        if follow_minutes < min_minutes:
+            remaining = min_minutes - follow_minutes
+            app.storage.user["claim_error"] = (
+                f"You've been following for {_format_duration(follow_minutes)}, "
+                f"but you need at least {_format_duration(min_minutes)} "
+                f"({_format_duration(remaining)} to go)."
+            )
+            ui.navigate.to(claim_redirect)
+            return
+
+        invite_url = await discorddb.create_invite(config["discord_server_id"])
+        if not invite_url:
+            app.storage.user["claim_error"] = "Failed to create your Discord invite. Please try again."
+            ui.navigate.to(claim_redirect)
+            return
+
+        await db.add_ext_claim(claim_sess, viewer_user_id, viewer_display_name, invite_url)
+        ui.navigate.to(invite_url)
+        return
+
+    # -----------------------------------------------------------------------
+    # Channel-point redemption flow (from /redeem page)
+    # -----------------------------------------------------------------------
     redemptions = await db.get_pending_redemptions_for_viewer(viewer_user_id)
     if not redemptions:
         app.storage.user["viewer_error"] = (
@@ -1463,6 +1487,89 @@ async def redeem_pick_page():
 
         ui.button("Claim invite", on_click=claim, color="primary").classes("q-mt-lg")
 
+    footer()
+
+
+def _format_duration(minutes: int) -> str:
+    """Format a duration in minutes to a human-readable string."""
+    if minutes >= 1440 and minutes % 1440 == 0:
+        days = minutes // 1440
+        return f"{days} day{'s' if days != 1 else ''}"
+    if minutes >= 60 and minutes % 60 == 0:
+        hours = minutes // 60
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    return f"{minutes} minute{'s' if minutes != 1 else ''}"
+
+
+@ui.page("/claim/{streamer_name}", dark=True)
+async def claim_page(streamer_name: str):
+    """Follow-age invite claim page for a specific streamer."""
+    error = app.storage.user.pop("claim_error", None)
+
+    streamer = await db.get_user_by_twitch_name(streamer_name)
+
+    header()
+    with ui.element("div").classes("th-page-wrap"):
+        ui.html(
+            '<p class="th-label" style="margin-bottom: var(--space-4);">Follow-Age Invite</p>',
+            sanitize=False,
+        )
+        with ui.element("div").classes("th-card"):
+            if not streamer or not streamer.get("twitch_user_id"):
+                ui.html(
+                    '<h2 class="th-card-title">Streamer not found</h2>'
+                    '<p class="th-card-body">This streamer hasn\'t set up Thinvite yet.</p>',
+                    sanitize=False,
+                )
+            elif streamer.get("ext_min_follow_minutes") is None:
+                ui.html(
+                    '<h2 class="th-card-title">Not available</h2>'
+                    f'<p class="th-card-body">{streamer["twitch_user_name"]} '
+                    "hasn't enabled follow-age invites.</p>",
+                    sanitize=False,
+                )
+            elif not streamer.get("discord_server_id"):
+                ui.html(
+                    '<h2 class="th-card-title">Not available</h2>'
+                    f'<p class="th-card-body">{streamer["twitch_user_name"]} '
+                    "hasn't finished setting up their Discord connection.</p>",
+                    sanitize=False,
+                )
+            else:
+                min_minutes = streamer["ext_min_follow_minutes"]
+                display_name = streamer["twitch_user_name"]
+                duration = _format_duration(min_minutes)
+
+                ui.html(
+                    f'<h2 class="th-card-title">Join {display_name}\'s Discord</h2>'
+                    f'<p class="th-card-body">You must have been following '
+                    f"{display_name} for at least <strong>{duration}</strong> "
+                    "to claim an invite.</p>",
+                    sanitize=False,
+                )
+
+                if error:
+                    ui.notify(error, type="negative", timeout=0)
+
+                async def twitch_claim_login():
+                    state = secrets.token_hex(32)
+                    app.storage.user["viewer_state"] = state
+                    app.storage.user["claim_streamer_sess"] = streamer["session_id"]
+                    app.storage.user["claim_streamer_twitch_id"] = streamer["twitch_user_id"]
+                    app.storage.user["claim_streamer_name"] = display_name
+                    ui.navigate.to(twitch.generate_viewer_auth_link(state))
+
+                with ui.button(on_click=twitch_claim_login, color=None).props(
+                    "no-caps unelevated"
+                ).style(
+                    "width: 100%; background: #6441a5; border-radius: var(--radius-sm); "
+                    "padding: 10px 20px; color: white; font-family: var(--font-body); "
+                    "font-weight: 600; font-size: var(--fs-14);"
+                ):
+                    ui.image("/static/img/TwitchGlitchWhite.svg").props(
+                        "fit=scale-down"
+                    ).style("width: 24px; height: 24px; margin-right: 8px;")
+                    ui.label("Sign in with Twitch")
     footer()
 
 
@@ -1860,21 +1967,27 @@ async def eventsub_callback(request: Request):
     msg_sig       = h.get("twitch-eventsub-message-signature", "")
     msg_type      = h.get("twitch-eventsub-message-type", "")
 
+    logger.info("EventSub callback hit: type=%s id=%s", msg_type, msg_id)
+
     # Reject messages older than 10 minutes (replay-attack prevention).
     try:
         ts = datetime.fromisoformat(msg_timestamp.replace("Z", "+00:00"))
         if abs((datetime.now(timezone.utc) - ts).total_seconds()) > 600:
+            logger.warning("EventSub message too old: %s", msg_timestamp)
             return Response(status_code=403)
     except Exception:
+        logger.warning("EventSub bad timestamp: %r", msg_timestamp)
         return Response(status_code=400)
 
     # Reject messages with an invalid HMAC signature.
     if not _verify_eventsub_signature(msg_id, msg_timestamp, msg_sig, raw_body):
+        logger.warning("EventSub signature mismatch for %s", msg_id)
         return Response(status_code=403)
 
     # Deduplicate by message ID (Twitch may redeliver on network failure).
     # Persisted in DB so restarts don't open a redelivery window.
     if await db.is_seen_eventsub_message(msg_id):
+        logger.info("EventSub duplicate message: %s", msg_id)
         return Response(status_code=204)
 
     try:
@@ -1954,13 +2067,6 @@ async def _handle_eventsub_event(payload: dict) -> None:
         sess_id, viewer_id, redeemer, twitch_redemption_id, twitch_reward_id
     )
 
-    # Notify the viewer's extension panel (if they have it open)
-    asyncio.create_task(
-        ext_pubsub.send_whisper(
-            broadcaster_user_id, viewer_id, {"type": "redemption_ready"}
-        )
-    )
-
     site_url = _SITE_URL.rstrip("/")
     message = (
         f"@{redeemer} Head to {site_url}/redeem to claim your Discord invite! "
@@ -1998,16 +2104,6 @@ async def startup():
         raise RuntimeError("SITE_URL must be set before starting")
     if not _EVENTSUB_SECRET:
         raise RuntimeError("THINVITE_EVENTSUB_SECRET must be set before starting")
-    # Extension env vars (optional — only needed if extension is used)
-    ext_secret = os.environ.get("TWITCH_EXT_SECRET")
-    if ext_secret:
-        assert os.environ.get("TWITCH_EXT_CLIENT_ID"), \
-            "TWITCH_EXT_CLIENT_ID required when TWITCH_EXT_SECRET is set"
-        assert os.environ.get("TWITCH_EXT_OWNER_ID"), \
-            "TWITCH_EXT_OWNER_ID required when TWITCH_EXT_SECRET is set"
-        logger.info("Extension EBS enabled")
-    else:
-        logger.info("Extension EBS disabled (TWITCH_EXT_SECRET not set)")
     await db.init_pool()         # pool must be ready before any DB call
     await bot.recover_subscriptions()
     asyncio.create_task(expiry.start_expiry_loop())
@@ -2108,219 +2204,6 @@ if _roboto_css:
     ui.add_head_html(_roboto_css, shared=True)
 
 
-# ---------------------------------------------------------------------------
-# Extension EBS endpoints
-# ---------------------------------------------------------------------------
-import ext_auth
-
-_follow_age_cache: dict[str, tuple[int | None, float]] = {}
-_FOLLOW_AGE_CACHE_TTL = 600  # 10 minutes
-
-
-def sweep_follow_age_cache() -> int:
-    """Remove stale entries from the follow-age cache. Returns count removed."""
-    now = time.time()
-    stale = [k for k, (_, ts) in _follow_age_cache.items() if now - ts >= _FOLLOW_AGE_CACHE_TTL]
-    for k in stale:
-        del _follow_age_cache[k]
-    return len(stale)
-
-
-async def _ext_get_status(user_id: str, channel_id: str) -> dict:
-    """Core logic for GET /api/ext/status."""
-    config = await db.get_ext_config(channel_id)
-    if not config:
-        return {"error": "not_configured"}
-
-    follow_age_enabled = config["ext_min_follow_minutes"] is not None
-    cp_enabled = config["twitch_redeem_id"] is not None
-
-    if not follow_age_enabled and not cp_enabled:
-        return {"error": "not_configured"}
-
-    if not config["discord_server_id"]:
-        return {"error": "not_configured"}
-
-    sess_id = config["session_id"]
-    min_minutes = config["ext_min_follow_minutes"] or 0
-    cooldown = config["ext_cooldown_days"] or 30
-
-    # Check pending redemptions (channel points or manual) for this streamer
-    pending = await db.get_pending_redemptions_for_viewer(user_id)
-    pending_here = [r for r in pending if r["streamer_session_id"] == sess_id]
-    has_pending = len(pending_here) > 0
-
-    # Check cooldown (only relevant for follow-age claims)
-    on_cooldown = False
-    if follow_age_enabled:
-        on_cooldown = await db.has_recent_invite(user_id, sess_id, cooldown)
-
-    # Check follow age (cached, in minutes) — only if follow-age invites enabled
-    follow_minutes = None
-    follow_eligible = False
-    if follow_age_enabled and not on_cooldown:
-        cache_key = f"{channel_id}:{user_id}"
-        cached = _follow_age_cache.get(cache_key)
-        if cached and (time.time() - cached[1]) < _FOLLOW_AGE_CACHE_TTL:
-            follow_minutes = cached[0]
-        else:
-            user_row = await db.get_user_by_twitch_id(channel_id)
-            if user_row and user_row.get("twitch_auth_token"):
-                follow_minutes = await twitch.get_follow_age(
-                    channel_id, user_id, user_row["twitch_auth_token"]
-                )
-                _follow_age_cache[cache_key] = (follow_minutes, time.time())
-        if follow_minutes is not None:
-            follow_eligible = follow_minutes >= min_minutes
-
-    return {
-        "has_pending_redemption": has_pending,
-        "follow_age_enabled": follow_age_enabled,
-        "follow_age_eligible": follow_eligible,
-        "follow_age_minutes": follow_minutes,
-        "min_follow_minutes": min_minutes,
-        "cp_enabled": cp_enabled,
-        "on_cooldown": on_cooldown,
-    }
-
-
-@app.get("/api/ext/status")
-async def ext_status(request: Request):
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return JSONResponse({"error": "missing_token"}, 401)
-    claims = ext_auth.verify_ext_jwt(auth[7:])
-    if claims is None:
-        return JSONResponse({"error": "identity_required"}, 403)
-    if _is_rate_limited(request):
-        return JSONResponse({"error": "rate_limited"}, 429)
-    result = await _ext_get_status(claims["user_id"], claims["channel_id"])
-    status = 404 if result.get("error") == "not_configured" else 200
-    return JSONResponse(result, status)
-
-
-@app.post("/api/ext/claim")
-async def ext_claim(request: Request):
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return JSONResponse({"error": "missing_token"}, 401)
-    claims = ext_auth.verify_ext_jwt(auth[7:])
-    if claims is None:
-        return JSONResponse({"error": "identity_required"}, 403)
-
-    if _is_rate_limited(request):
-        return JSONResponse({"error": "rate_limited"}, 429)
-
-    body = await request.json()
-    claim_type = body.get("type")
-
-    config = await db.get_ext_config(claims["channel_id"])
-    if not config:
-        return JSONResponse({"error": "not_configured"}, 404)
-
-    follow_age_enabled = config["ext_min_follow_minutes"] is not None
-    cp_enabled = config["twitch_redeem_id"] is not None
-
-    if not follow_age_enabled and not cp_enabled:
-        return JSONResponse({"error": "not_configured"}, 404)
-
-    sess_id = config["session_id"]
-    guild_id = config["discord_server_id"]
-    cooldown = config["ext_cooldown_days"] or 30
-
-    if not guild_id:
-        return JSONResponse({"error": "discord_not_configured"}, 400)
-
-    if claim_type == "redemption":
-        pending = await db.get_pending_redemptions_for_viewer(claims["user_id"])
-        pending_here = [r for r in pending if r["streamer_session_id"] == sess_id]
-        if not pending_here:
-            return JSONResponse({"error": "no_pending_redemption"}, 404)
-        redemption = pending_here[0]
-        invite_url = await discorddb.create_invite(guild_id)
-        if not invite_url:
-            return JSONResponse({"error": "invite_creation_failed"}, 500)
-        await db.fulfill_redemption(redemption["id"], invite_url)
-        if redemption.get("twitch_reward_id") and redemption.get("twitch_redemption_id"):
-            await twitch.fulfill_redemption(
-                sess_id, redemption["twitch_reward_id"],
-                redemption["twitch_redemption_id"],
-            )
-        return JSONResponse({"invite_url": invite_url})
-
-    elif claim_type == "follow_age":
-        if not follow_age_enabled:
-            return JSONResponse({"error": "not_eligible"}, 403)
-        if await db.has_recent_invite(claims["user_id"], sess_id, cooldown):
-            return JSONResponse({"error": "on_cooldown"}, 409)
-        min_minutes = config["ext_min_follow_minutes"] or 0
-        user_row = await db.get_user_by_twitch_id(claims["channel_id"])
-        if not user_row or not user_row.get("twitch_auth_token"):
-            return JSONResponse({"error": "streamer_token_missing"}, 500)
-        follow_minutes = await twitch.get_follow_age(
-            claims["channel_id"], claims["user_id"], user_row["twitch_auth_token"]
-        )
-        if follow_minutes is None or follow_minutes < min_minutes:
-            return JSONResponse({"error": "not_eligible"}, 403)
-        invite_url = await discorddb.create_invite(guild_id)
-        if not invite_url:
-            return JSONResponse({"error": "invite_creation_failed"}, 500)
-        viewer_info = await twitch.get_user_by_id(
-            claims["user_id"], user_row["twitch_auth_token"]
-        )
-        viewer_name = (viewer_info or {}).get("display_name") or claims["user_id"]
-        await db.add_ext_claim(sess_id, claims["user_id"], viewer_name, invite_url)
-        return JSONResponse({"invite_url": invite_url})
-
-    return JSONResponse({"error": "invalid_type"}, 400)
-
-
-@app.get("/api/ext/config")
-async def ext_config_get(request: Request):
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return JSONResponse({"error": "missing_token"}, 401)
-    claims = ext_auth.verify_ext_jwt(auth[7:])
-    if claims is None:
-        return JSONResponse({"error": "identity_required"}, 403)
-    if claims.get("role") != "broadcaster":
-        return JSONResponse({"error": "broadcaster_only"}, 403)
-
-    config = await db.get_ext_config(claims["channel_id"])
-    return JSONResponse({
-        "min_follow_minutes": config["ext_min_follow_minutes"] if config else None,
-        "cooldown_days": config["ext_cooldown_days"] if config else None,
-    })
-
-
-@app.post("/api/ext/config")
-async def ext_config(request: Request):
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return JSONResponse({"error": "missing_token"}, 401)
-    claims = ext_auth.verify_ext_jwt(auth[7:])
-    if claims is None:
-        return JSONResponse({"error": "identity_required"}, 403)
-    if claims.get("role") != "broadcaster":
-        return JSONResponse({"error": "broadcaster_only"}, 403)
-    if _is_rate_limited(request):
-        return JSONResponse({"error": "rate_limited"}, 429)
-
-    body = await request.json()
-    min_follow = body.get("min_follow_minutes")
-    cooldown = body.get("cooldown_days")
-
-    if not isinstance(min_follow, int) or min_follow < 0:
-        return JSONResponse({"error": "invalid_min_follow_minutes"}, 400)
-    if not isinstance(cooldown, int) or cooldown < 1:
-        return JSONResponse({"error": "invalid_cooldown_days"}, 400)
-
-    user = await db.get_user_by_twitch_id(claims["channel_id"])
-    if not user:
-        return JSONResponse({"error": "user_not_found"}, 404)
-
-    await db.set_ext_config(user["session_id"], min_follow, cooldown)
-    return JSONResponse({"ok": True})
 
 
 ui.run(
